@@ -1,60 +1,73 @@
 <div align="center">
 
-<img src="assets/icon-512.png" width="112" alt="Arclyric">
+<img src="assets/icon-512.png" width="128" alt="Arclyric">
 
 # 弧光歌词 · ARCLYRIC
 
 **把歌词戴在腕上。**
 
-小米手环（Vela OS）同步歌词播放器 + Android 手机伴侣
+小米手环 9 Pro（Vela OS）同步歌词播放器 + Android 伴侣
 
-<p>
-  <a href="https://github.com/wuxiang999">
-    <img src="https://avatars.githubusercontent.com/u/182329103?v=4" width="40" height="40" alt="LANHU199">
-  </a>
-  <br>
-  <sub>by <a href="https://github.com/wuxiang999">LANHU199</a></sub>
-</p>
+<br>
+
+<a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-6EF3C5?style=flat-square&labelColor=111820"></a>
+<a href="#"><img alt="Vela OS" src="https://img.shields.io/badge/Vela_OS-QuickApp-6EF3C5?style=flat-square&labelColor=111820"></a>
+<a href="#"><img alt="Device" src="https://img.shields.io/badge/Device-Mi_Band_9_Pro-6EF3C5?style=flat-square&labelColor=111820"></a>
+<a href="#"><img alt="Android" src="https://img.shields.io/badge/Android-8.0+-3DDC84?style=flat-square&labelColor=111820"></a>
+<a href="https://github.com/wuxiang999/Arclyric/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/wuxiang999/Arclyric?style=flat-square&labelColor=111820&color=6EF3C5"></a>
+
+<br><br>
+
+<a href="https://github.com/wuxiang999">
+  <img src="https://avatars.githubusercontent.com/u/182329103?v=4" width="40" height="40" alt="LANHU199">
+</a>
+
+<sub>by <a href="https://github.com/wuxiang999"><b>LANHU199</b></a></sub>
 
 </div>
+
+<p align="center">
+  <img src="assets/brand-preview.png" width="740" alt="弧光歌词 品牌预览">
+</p>
 
 ---
 
 ## 这是什么
 
-手环没有扬声器，歌在手机上放。这个项目把手环变成手机播放器的**遥控器 + 歌词显示屏**：
+手环没有扬声器，歌在手机上放。这个项目把小米手环变成手机播放器的 **遥控器 + 歌词显示屏**：
 
 - 手环显示歌名、歌手、专辑、进度、当前句与下一句歌词；
 - 手环可以播放 / 暂停 / 上一首 / 下一首 / ±10 秒；
 - 歌词**全自动**：手机端读 MediaSession，本地没有就自动在线匹配带时间轴的 LRC，分包推到手表；
 - 手环把收到过的歌词存成本地歌词本，同一首歌离线也能看。
 
-整个链路：
+```mermaid
+flowchart LR
+    RPK["⌚ 手环快应用<br/>Vela JS · .rpk"]
+    MI["小米运动健康"]
+    APK["📱 Android 伴侣<br/>Kotlin · .apk"]
+    PLAYER["音乐播放器<br/>MediaSession"]
+    NET["QQ音乐 · LRCLIB<br/>自建聚合接口"]
 
+    RPK <-->|"@system.interconnect"| MI
+    MI <-->|"XMS Wearable SDK"| APK
+    APK --> PLAYER
+    APK <-->|"在线歌词 / 词库"| NET
 ```
-┌─────────────────────┐        ┌──────────────┐        ┌──────────────────────┐
-│  手环快应用 (.rpk)  │◄──────►│ 小米运动健康  │◄──────►│  Android 伴侣 (.apk) │
-│  Vela JS · 6 页     │  interconnect 协议      │  XMS Wearable SDK     │
-└─────────────────────┘        └──────────────┘        └──────────┬───────────┘
-                                                                  │
-                                                     MediaSession │ 在线歌词 / 词库
-                                                                  ▼
-                                                     ┌──────────────────────┐
-                                                     │ QQ音乐 · LRCLIB · 自建│
-                                                     └──────────────────────┘
-```
 
-## 手环端
+## 功能
 
-适配小米手环 9 Pro：**336×480 像素，`designWidth: 192`，逻辑高度约 274dp**。全部按这个尺寸排版，大字号、加粗、少操作。
+### ⌚ 手环端 · Vela JS
+
+适配小米手环 9 Pro：**336×480 像素**、`designWidth: 192`，缩放 1.75×，逻辑高度约 **274dp**。全部按这个尺寸排版：大字号、加粗、少操作。
 
 | 页面 | 内容 |
-|---|---|
-| 主页 | 播放器 / 歌词本 / 设置 三个入口 |
-| 播放器 | 状态灯、歌名歌手、当前句（最多 3 行）、下一句、进度条、上一首 / 播放 / 下一首、±10 秒 |
-| 全屏歌词 | 5 行歌词窗、当前句高亮、上下滑浏览、点句跳转、偏移微调 |
-| 歌词本 | 已存歌词分页列表 + 页内全文阅读 |
-| 设置 | 连接 / 播放 / 显示 三个标签页，整行胶囊，不用 switch |
+|:--|:--|
+| **主页** | 播放器 / 歌词本 / 设置 三个入口 |
+| **播放器** | 状态灯、歌名歌手、当前句（最多 3 行）、下一句、进度条、上一首 / 播放 / 下一首、±10 秒 |
+| **全屏歌词** | 5 行歌词窗、当前句高亮、上下滑浏览、点句跳转、偏移微调 |
+| **歌词本** | 已存歌词分页列表 + 页内全文阅读 |
+| **设置** | 连接 / 播放 / 显示 三个标签页，整行胶囊，不用 switch |
 
 交互细节：
 
@@ -63,35 +76,49 @@
 - 所有按钮用图标，不占文字位置；
 - 页面固定一屏不滚动，靠分页而不是 `scroll`。
 
-加载动画：这个版本的 Vela CSS **没有 `@keyframes`**，也没有 `@media`，所以动画全部是 JS 定时器切换 class 与宽度档位。播放页和全屏歌词页的进度条显示的是**歌词分包的真实接收进度**（已收到 x/y 包），不是装饰动画。
+> [!NOTE]
+> 这个版本的 Vela CSS **没有 `@keyframes`**，也没有 `@media`，动画全部是 JS 定时器切换 class 与宽度档位。
+> 播放页和全屏歌词页的进度条显示的是**歌词分包的真实接收进度**（已收到 x/y 包），不是装饰动画。
 
-## 手机端
+### 📱 手机端 · Kotlin
 
-Kotlin + 原生 View，监听 `MediaSession`，通过 XMS Wearable SDK 和手环通信。
+原生 View，监听 `MediaSession`，通过 XMS Wearable SDK 和手环通信。
 
 - 顶部渐变主视觉、连接状态指示灯、实时播放信息；
-- 歌词库：**手环词库**（手环上真实存着的那几首，可删可重发）与**手机缓存**（歌词源）两个标签页；
+- 歌词库：**手环词库**（手环上真实存着的那几首，可删可重发）与 **手机缓存**（歌词源）两个标签页；
 - 导入：系统文件选择器批量选 `.lrc`，或粘贴网易云歌单链接批量抓词（单次最多 60 首）；
 - 日志：内存环形缓冲 + 实时刷新，不用连 logcat 也能排错。
 
-## 目录
+## 目录结构
 
-```
+```text
 src/                      手环端（Vela JS 快应用）
-  manifest.json           包名、路由、features、designWidth
-  app.ux                  应用入口
-  common/scripts/         protocol / lrc / transport / player-state / library / store
-  pages/                  boot · player · lyrics · book · reader · settings
-  common/images/          图标（只支持 PNG）
+├─ manifest.json          包名、路由、features、designWidth
+├─ app.ux                 应用入口
+├─ common/scripts/        protocol / lrc / transport / player-state / library / store
+├─ common/images/         图标（只支持 PNG）
+└─ pages/                 boot · player · lyrics · book · reader · settings
+
 android/                  手机端（Kotlin）
-  app/src/main/java/com/vela/lyricplayer/
-  app/libs/               XMS Wearable SDK
+├─ app/src/main/java/com/vela/lyricplayer/
+├─ app/libs/              XMS Wearable SDK
+└─ build.sh               APK 构建脚本
+
 tools/
-  build-rpk.sh            手环端唯一出包入口
-  gen-icons.py            图标生成
+├─ build-rpk.sh           手环端唯一出包入口
+└─ gen-icons.py           图标生成
+
 assets/                   512 / 96 图标与品牌图
 docs/DESIGN.md            设计系统与排版依据
 ```
+
+## 快速开始
+
+1. **手机装 APK**，打开后授予「通知使用权」；
+2. 手机上放歌，日志出现「已自动启动同步服务」即表示开始工作；
+3. **手环装 RPK**，桌面出现「弧光歌词」，打开就能看到当前歌曲与歌词。
+
+> 两边必须同包名、同证书，见 [签名](#签名)。
 
 ## 构建
 
@@ -112,7 +139,11 @@ bash tools/build-rpk.sh debug     # 输出 dist/Arclyric-1.0.1-debug.rpk
 bash tools/build-rpk.sh release   # 输出 dist/Arclyric-1.0.1-release.rpk
 ```
 
-脚本首次运行会把 `aiot-toolkit@1.2.1-alpha.0`（最后一条纯 JS / webpack 工具链）装进 `.tmp/toolchain/`，约 8 分钟，之后复用。它会自动处理三件事：`--no-bin-links`（Android 共享存储不支持符号链接）、`PUPPETEER_SKIP_DOWNLOAD=1`（没有 aarch64 Chromium 包）、构建后还原被编译器清空的 `dist/` 其它产物。
+脚本首次运行会把 `aiot-toolkit@1.2.1-alpha.0`（最后一条纯 JS / webpack 工具链）装进 `.tmp/toolchain/`，约 8 分钟，之后复用。它会自动处理三件事：
+
+- `--no-bin-links`：Android 共享存储不支持符号链接；
+- `PUPPETEER_SKIP_DOWNLOAD=1`：没有 aarch64 Chromium 包；
+- 构建后还原被编译器清空的 `dist/` 其它产物。
 
 ### 手机端（APK）
 
@@ -123,19 +154,20 @@ bash build.sh            # 输出 dist/Arclyric-<version>-{debug,release}.apk
 
 Gradle 参数、aapt2 覆盖、签名读取方式都在脚本和 `app/build.gradle.kts` 里。
 
-### 签名（必读）
+### 签名
 
-APK 与 RPK **必须同包名、同证书**，否则能发现设备、能建通道，但消息发不出去，日志只会给你 `sendMessage failed`。
+> [!WARNING]
+> APK 与 RPK **必须同包名、同证书**。否则能发现设备、能建通道，但消息发不出去，日志只会给你 `sendMessage failed`。
 
-- 包名：`com.vela.lyricplayer`（`src/manifest.json` 与 `applicationId` 必须一致）；
-- 签名：仓库不含任何 keystore。把 `android/keystore.properties.example` 复制成 `android/keystore.properties` 填自己的值，并把同一套证书配到 `tools/build-rpk.sh` 用的 RPK 签名里。
+- **包名**：`com.vela.lyricplayer`，`src/manifest.json` 与 `applicationId` 必须一致；
+- **证书**：仓库不含任何 keystore。把 `android/keystore.properties.example` 复制成 `android/keystore.properties` 填自己的值，并把同一套证书配到 `tools/build-rpk.sh` 用的 RPK 签名里。
 
 ### 版本号
 
 三处必须同步，否则会出现「改了代码但设备没变化」：
 
 | 文件 | 字段 |
-|---|---|
+|:--|:--|
 | `package.json` | `version` |
 | `src/manifest.json` | `versionName` + `versionCode` |
 | `android/app/build.gradle.kts` | `versionName` + `versionCode` |
@@ -145,8 +177,12 @@ APK 与 RPK **必须同包名、同证书**，否则能发现设备、能建通�
 UTF-8 JSON，带版本号：
 
 ```json
-{ "v": 1, "type": "lyrics.chunk", "ts": 1730000000000,
-  "payload": { "id": "song-1", "index": 0, "total": 11, "text": "..." } }
+{
+  "v": 1,
+  "type": "lyrics.chunk",
+  "ts": 1730000000000,
+  "payload": { "id": "song-1", "index": 0, "total": 11, "text": "..." }
+}
 ```
 
 几条踩出来的规则：
@@ -162,9 +198,13 @@ UTF-8 JSON，带版本号：
 全程自动，不需要手动导入：
 
 1. 手机读 MediaSession 拿歌名 / 歌手 / 时长；
-2. 先查本地词库；没有就在线匹配：
-   - 中文曲：自建聚合接口 → QQ 音乐 → LRCLIB
-   - 其它曲：LRCLIB → QQ 音乐 → 自建聚合接口
+2. 先查本地词库，没有就在线匹配：
+
+   | 曲目类型 | 匹配顺序 |
+   |:--|:--|
+   | 中文曲 | 自建聚合接口 → QQ 音乐 → LRCLIB |
+   | 其它曲 | LRCLIB → QQ 音乐 → 自建聚合接口 |
+
 3. 每个来源按「标题 + 歌手 + 时长」打分，低于阈值直接丢弃，宁缺毋滥；
 4. 命中后缓存成本地 `.lrc`，分包推给手环；
 5. 手环存进歌词本，下次离线可看。
@@ -176,7 +216,7 @@ UTF-8 JSON，带版本号：
 ## 已知限制
 
 - 只在**小米手环 9 Pro** 上做过真机验证，其它 Vela 设备需要改 `designWidth` 与字号；
-- 这个版本的 Vela 不支持 `@media`、`@keyframes`、复合选择器，`list` / `scroll` / `switch` 在 9 Pro 上不可靠，所以列表、分页、开关全部手写；
+- 这个版本的 Vela 不支持 `@media`、`@keyframes`、复合选择器；`list` / `scroll` / `switch` 在 9 Pro 上不可靠，所以列表、分页、开关全部手写；
 - `text` 的 `lines` 是 **style 不是 attribute**，写错位置编译能过但不生效；
 - 在线歌词依赖第三方接口，接口挂了就只剩本地词库。
 
@@ -184,8 +224,8 @@ UTF-8 JSON，带版本号：
 
 - 平台文档：<https://iot.mi.com/vela/quickapp/>
 - 排版与防裁切依据：见 [`docs/DESIGN.md`](docs/DESIGN.md)，参考 Compose `LineHeightStyle`、Flutter `TextHeightBehavior` 等公开实现的同类问题结论
-- 配套 agent skill：[`vela-quickapp`](https://github.com/wuxiang999/arclyric-vela-skill)
+- 配套 agent skill：[`arclyric-vela-skill`](https://github.com/wuxiang999/arclyric-vela-skill)
 
 ## 许可
 
-[MIT](LICENSE) © 2026 LANHU199
+[MIT](LICENSE) © 2026 [LANHU199](https://github.com/wuxiang999)
