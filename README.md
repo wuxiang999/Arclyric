@@ -184,7 +184,7 @@ UTF-8 JSON，带版本号：
 
 - 平台文档：<https://iot.mi.com/vela/quickapp/>
 - 排版与防裁切依据：见 [`docs/DESIGN.md`](docs/DESIGN.md)，参考 Compose `LineHeightStyle`、Flutter `TextHeightBehavior` 等公开实现的同类问题结论
-- 配套 agent skill：[`vela-quickapp`](https://github.com/wuxiang999/vela-quickapp)
+- 配套 agent skill：[`vela-quickapp`](https://github.com/wuxiang999/arclyric-vela-skill)
 
 ## 许可
 
