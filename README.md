@@ -13,7 +13,7 @@
 <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-6EF3C5?style=flat-square&labelColor=111820"></a>
 <a href="#"><img alt="Vela OS" src="https://img.shields.io/badge/Vela_OS-QuickApp-6EF3C5?style=flat-square&labelColor=111820"></a>
 <a href="#"><img alt="Device" src="https://img.shields.io/badge/Device-Mi_Band_9_Pro-6EF3C5?style=flat-square&labelColor=111820"></a>
-<a href="#"><img alt="Android" src="https://img.shields.io/badge/Android-8.0+-3DDC84?style=flat-square&labelColor=111820"></a>
+<a href="#"><img alt="Android" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&labelColor=111820"></a>
 <a href="https://github.com/wuxiang999/Arclyric/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/wuxiang999/Arclyric?style=flat-square&labelColor=111820&color=6EF3C5"></a>
 
 <br><br>
