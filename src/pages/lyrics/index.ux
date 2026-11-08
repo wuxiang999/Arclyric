@@ -17,7 +17,7 @@
       <block for="{{rows}}">
         <div class="line-row {{$item.active ? 'row-active' : ''}}" @click="onLine($item)" @touchstart="onTouchStart" @touchend="onTouchEnd">
           <div class="marker {{$item.active && $item.first ? 'marker-on' : ''}}"></div>
-          <text class="line {{$item.cls}}" @click="onLine($item)" @touchstart="onTouchStart" @touchend="onTouchEnd">{{$item.text}}</text>
+          <text class="line {{$item.cls}}">{{$item.text}}</text>
         </div>
       </block>
     </div>
@@ -80,6 +80,8 @@ export default {
     offsetText: '0.0s',
     browsing: false,
     fontSize: 1,
+    swipeStep: 1,
+    offsetStep: 500,
     vibrateOn: true,
     loading: true,
     loadingText: '正在准备',
@@ -94,29 +96,24 @@ export default {
   },
   onInit() {
     debug.mark('page:lyrics', 'onInit')
-    // Vela 没有 CSS 动画，用定时器换帧做加载动效
-    this.loadTimer = setInterval(() => {
-      const step = (this.dotStep + 1) % 4
-      this.dotStep = step
-      this.dots = step === 0 ? '' : step === 1 ? '·' : step === 2 ? '··' : '···'
-      const seq = [20, 40, 60, 80, 60, 40]
-      this.loadStep = (this.loadStep + 1) % seq.length
-      this.loadWidth = seq[this.loadStep]
-    }, 320)
     this.lines = []
     this.focus = -1
     this.browseTimer = null
+    this.browseIdleMs = 6000
     this.touchX = 0
     this.touchY = 0
     this.swiped = false
     this.swipedAt = 0
     this.lastBrowseAt = 0
+    this.loadTimer = null
+    // Vela 没有 CSS 动画，用定时器换帧做加载动效；加载结束即停
+    this.startLoadTimer()
     try {
       this.unsubscribe = player.subscribe((reason, view) => {
-        this.apply(view)
+        this.apply(view, reason)
       })
       player.init().then(() => {
-        this.apply(player.snapshot())
+        this.apply(player.snapshot(), 'ready')
       }).catch((err) => {
         debug.error('page:lyrics', 'player.init', err)
       })
@@ -127,10 +124,30 @@ export default {
   onShow() {
     debug.mark('page:lyrics', 'onShow')
     try {
-      this.apply(player.snapshot())
+      this.apply(player.snapshot(), 'show')
     } catch (e) {
       debug.error('page:lyrics', 'onShow', e)
     }
+  },
+  startLoadTimer() {
+    if (this.loadTimer) {
+      return
+    }
+    this.loadTimer = setInterval(() => {
+      const step = (this.dotStep + 1) % 4
+      this.dotStep = step
+      this.dots = step === 0 ? '' : step === 1 ? '·' : step === 2 ? '··' : '···'
+      const seq = [20, 40, 60, 80, 60, 40]
+      this.loadStep = (this.loadStep + 1) % seq.length
+      this.loadWidth = seq[this.loadStep]
+    }, 320)
+  },
+  stopLoadTimer() {
+    if (this.loadTimer) {
+      clearInterval(this.loadTimer)
+      this.loadTimer = null
+    }
+    this.dots = ''
   },
   onDestroy() {
     if (this.loadTimer) {
@@ -150,19 +167,26 @@ export default {
     const value = String(text || '')
     return value.length > max ? value.slice(0, max - 1) + '…' : value
   },
-  apply(view) {
-    this.title = this.shorten(view.title || '未在播放', 11)
-    this.artist = this.shorten(view.artist || '', 15)
+  apply(view, reason) {
+    // 每秒 tick 不动歌词行：高亮变化由 'line' 事件单独驱动
+    if (reason === 'tick') {
+      return
+    }
+    this.title = this.shorten(view.title || '未在播放', 9)
+    this.artist = this.shorten(view.artist || '', 12)
     this.lines = view.lines || []
     if (!this.browsing) {
       this.focus = view.lyricIndex
     }
-    this.refreshRows()
     this.hasLyrics = view.hasLyrics
     this.connected = view.connected
     this.mock = view.mock
     this.offsetText = view.offsetText
     this.fontSize = typeof view.fontSize === 'number' ? view.fontSize : 1
+    this.swipeStep = Math.max(1, Math.min(3, Number(view.swipeStep) || 1))
+    this.offsetStep = Math.max(100, Math.min(1000, Number(view.offsetStep) || 500))
+    const idle = Number(view.browseIdle) || 6
+    this.browseIdleMs = Math.max(3, Math.min(10, Math.round(idle))) * 1000
     this.vibrateOn = view.vibrate !== false
     // 歌词没到齐时显示真实分包进度，收齐了自动消失
     const receiving = !!view.transferActive && !view.mock
@@ -176,6 +200,13 @@ export default {
     } else {
       this.loading = true
       this.loadingText = receiving ? '正在接收歌词' : (view.connected ? '等待手机歌词' : '等待连接手机')
+    }
+    // 先定好 loading 再重建行，避免 hasLyrics 与空态打架
+    this.refreshRows()
+    if (this.loading) {
+      this.startLoadTimer()
+    } else {
+      this.stopLoadTimer()
     }
   },
   // 以 focus 为中心取前后各两句；浏览时可以上下滑着看全曲
@@ -207,7 +238,8 @@ export default {
       return
     }
     this.markSwiped()
-    const steps = Math.max(1, Math.min(6, Math.round(Math.abs(dy) / 26)))
+    // 一次滑动固定按设置翻几句，默认 1 句；不再按距离叠加，避免一下跳两段
+    const steps = Math.max(1, Math.min(3, this.swipeStep || 1))
     this.browse(dy < 0 ? steps : -steps)
   },
   onSwipe(evt) {
@@ -216,8 +248,7 @@ export default {
       return
     }
     this.markSwiped()
-    const distance = Number(evt.distance) || 40
-    const steps = Math.max(1, Math.min(6, Math.round(distance / 26)))
+    const steps = Math.max(1, Math.min(3, this.swipeStep || 1))
     this.browse(dir === 'up' ? steps : -steps)
   },
   markSwiped() {
@@ -267,7 +298,7 @@ export default {
       this.browsing = false
       this.focus = player.snapshot().lyricIndex
       this.refreshRows()
-    }, 6000)
+    }, this.browseIdleMs || 6000)
   },
   // 一句歌词折成 1-2 个显示行，全部拍平成一个数组，
   // 每行高度固定，绝不会出现「第二行被裁掉一半」。
@@ -279,7 +310,7 @@ export default {
       const item = items[i]
       const active = !!item.active
       const units = unitsFor(active ? ACTIVE_SIZE[size] : IDLE_SIZE[size])
-      const parts = lrc.wrap(item.text, units, active ? 2 : 1)
+      const parts = lrc.wrap(item.text, units, active ? 3 : 1)
       const texts = parts.length ? parts : ['']
       for (let j = 0; j < texts.length; j++) {
         list.push({
@@ -350,11 +381,11 @@ export default {
   },
   offsetBack() {
     this.vibrate()
-    player.adjustOffset(-500)
+    player.adjustOffset(-(this.offsetStep || 500))
   },
   offsetForward() {
     this.vibrate()
-    player.adjustOffset(500)
+    player.adjustOffset(this.offsetStep || 500)
   },
   offsetReset() {
     this.vibrate()
@@ -410,13 +441,17 @@ export default {
   flex-direction: column;
 }
 .song-title {
+  lines: 1;
   font-size: 15.5dp;
+  line-height: 21dp;
   font-weight: bold;
   color: #eef4fb;
 }
 .song-artist {
+  lines: 1;
   margin-top: 1dp;
   font-size: 11dp;
+  line-height: 15dp;
   font-weight: bold;
   color: #63748a;
 }
@@ -463,15 +498,15 @@ export default {
 }
 .li-s {
   font-size: 11dp;
-  line-height: 17dp;
+  line-height: 16dp;
 }
 .li-m {
   font-size: 12.5dp;
-  line-height: 19dp;
+  line-height: 18dp;
 }
 .li-l {
   font-size: 14dp;
-  line-height: 21dp;
+  line-height: 20dp;
 }
 .la-s {
   font-size: 14.5dp;

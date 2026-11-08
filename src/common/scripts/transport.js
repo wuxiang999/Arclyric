@@ -152,15 +152,42 @@ function onStatus(handler) {
   }
 }
 
+// 发送超时：9 Pro 上偶发 success 回调不来，await 会永久挂住，
+// 把 libraryBusy / 逐包等待卡死。这里给每次发送一个硬上限。
+const SEND_TIMEOUT_MS = 2500
+
 function send(message) {
   return new Promise(function (resolve, reject) {
+    let finished = false
+    let timer = null
+    function settle(ok, value) {
+      if (finished) {
+        return
+      }
+      finished = true
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
+      if (ok) {
+        resolve(value)
+      } else {
+        reject(value)
+      }
+    }
+    timer = setTimeout(function () {
+      status.connected = false
+      status.lastError = '发送超时'
+      notifyStatus()
+      settle(false, new Error('发送超时'))
+    }, SEND_TIMEOUT_MS)
     if (!connection) {
       // 实例可能还没建好，补一次初始化再试
       initialized = false
       init()
     }
     if (!connection) {
-      reject(new Error('设备通信未初始化'))
+      settle(false, new Error('设备通信未初始化'))
       return
     }
     // 关键：connect.send 的 data 必须是对象。传字符串会被原生层拒绝，
@@ -170,11 +197,11 @@ function send(message) {
     try {
       text = typeof message === 'string' ? message : JSON.stringify(message)
     } catch (e) {
-      reject(e)
+      settle(false, e)
       return
     }
     if (!text) {
-      reject(new Error('空消息'))
+      settle(false, new Error('空消息'))
       return
     }
     // 不以缓存的 readyState 拦截：之前 getReadyState 未及时翻转导致指令全部被挡掉。
@@ -188,7 +215,7 @@ function send(message) {
             status.lastError = ''
             notifyStatus()
           }
-          resolve(true)
+          settle(true, true)
         },
         fail: function (res, code) {
           status.connected = false
@@ -196,14 +223,14 @@ function send(message) {
           notifyStatus()
           // 不再在这里调 getReadyState：失败时连环触发原生查询，
           // 正是小米运动健康重连瞬间把手环带崩的写法。状态交给 onopen/onclose。
-          reject(new Error(status.lastError))
+          settle(false, new Error(status.lastError))
         }
       })
     } catch (e) {
       status.connected = false
       status.lastError = String(e)
       notifyStatus()
-      reject(e)
+      settle(false, e)
     }
   })
 }

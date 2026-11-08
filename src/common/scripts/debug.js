@@ -6,7 +6,7 @@ import storage from '@system.storage'
 // 手机端会把它们原样显示在日志区，用于定位「白图标 / 点击闪退」这类无法取日志的问题。
 
 const MAX_QUEUE = 60
-const VERSION = 'arclyric/1.0.0'
+const VERSION = 'arclyric/1.0.1'
 const CRASH_KEY = 'arclyric_crash'
 
 let queue = []

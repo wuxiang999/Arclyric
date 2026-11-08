@@ -217,6 +217,8 @@ async function seed(demos) {
       await writeText(key, demo.lrc)
     }
   }
+  // 写完再失效一次，否则本轮已经读过的空目录缓存会让词本仍然显示 0 首
+  invalidate()
 }
 
 function normalize(text) {

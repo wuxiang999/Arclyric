@@ -8,13 +8,16 @@
 
     <div class="tabs">
       <div class="tab {{tab === 0 ? 'tab-on' : ''}}" @click="switchTab(0)">
-        <text class="tab-text {{tab === 0 ? 'tab-text-on' : ''}}" @click="switchTab(0)">连接</text>
+        <text class="tab-text {{tab === 0 ? 'tab-text-on' : ''}}">连接</text>
       </div>
       <div class="tab {{tab === 1 ? 'tab-on' : ''}}" @click="switchTab(1)">
-        <text class="tab-text {{tab === 1 ? 'tab-text-on' : ''}}" @click="switchTab(1)">播放</text>
+        <text class="tab-text {{tab === 1 ? 'tab-text-on' : ''}}">播放</text>
       </div>
       <div class="tab {{tab === 2 ? 'tab-on' : ''}}" @click="switchTab(2)">
-        <text class="tab-text {{tab === 2 ? 'tab-text-on' : ''}}" @click="switchTab(2)">显示</text>
+        <text class="tab-text {{tab === 2 ? 'tab-text-on' : ''}}">显示</text>
+      </div>
+      <div class="tab {{tab === 3 ? 'tab-on' : ''}}" @click="switchTab(3)">
+        <text class="tab-text {{tab === 3 ? 'tab-text-on' : ''}}">更多</text>
       </div>
     </div>
 
@@ -26,10 +29,10 @@
           <text class="status-text">{{statusText}}</text>
         </div>
         <div class="btn" @click="diagnose">
-          <text class="btn-text" @click="diagnose">诊断连接</text>
+          <text class="btn-text">诊断连接</text>
         </div>
         <div class="btn" @click="resync">
-          <text class="btn-text" @click="resync">重新同步</text>
+          <text class="btn-text">重新同步</text>
         </div>
       </div>
       <text class="note" if="{{noteText}}">{{noteText}}</text>
@@ -39,35 +42,54 @@
     <!-- 播放 -->
     <div class="body" if="{{tab === 1}}">
       <div class="opt" @click="toggleMock">
-        <text class="opt-text" @click="toggleMock">演示模式 · {{mock ? '开' : '关'}}</text>
+        <text class="opt-text">演示模式 · {{mock ? '开' : '关'}}</text>
       </div>
       <div class="opt" @click="toggleFollow">
-        <text class="opt-text" @click="toggleFollow">自动跟随歌词 · {{follow ? '开' : '关'}}</text>
+        <text class="opt-text">自动跟随歌词 · {{follow ? '开' : '关'}}</text>
       </div>
       <div class="opt" @click="toggleAutoSave">
-        <text class="opt-text" @click="toggleAutoSave">自动保存歌词 · {{autoSave ? '开' : '关'}}</text>
+        <text class="opt-text">自动保存歌词 · {{autoSave ? '开' : '关'}}</text>
       </div>
       <div class="opt" @click="toggleVibrate">
-        <text class="opt-text" @click="toggleVibrate">操作振动 · {{vibrate ? '开' : '关'}}</text>
+        <text class="opt-text">操作振动 · {{vibrate ? '开' : '关'}}</text>
       </div>
       <text class="opt-label">歌词偏移</text>
       <div class="offset-bar">
-        <div class="obtn" @click="offsetBack"><text class="osym" @click="offsetBack">-</text></div>
-        <div class="oval" @click="offsetReset"><text class="oval-text" @click="offsetReset">{{offsetText}}</text></div>
-        <div class="obtn" @click="offsetForward"><text class="osym" @click="offsetForward">+</text></div>
+        <div class="obtn" @click="offsetBack"><text class="osym">-</text></div>
+        <div class="oval" @click="offsetReset"><text class="oval-text">{{offsetText}}</text></div>
+        <div class="obtn" @click="offsetForward"><text class="osym">+</text></div>
       </div>
     </div>
 
     <!-- 显示 -->
     <div class="body" if="{{tab === 2}}">
       <div class="opt" @click="cycleFont">
-        <text class="opt-text" @click="cycleFont">歌词字号 · {{fontLabel}}</text>
+        <text class="opt-text">歌词字号 · {{fontLabel}}</text>
       </div>
       <div class="opt" @click="cycleStep">
-        <text class="opt-text" @click="cycleStep">滑动步长 · {{swipeStep}} 句</text>
+        <text class="opt-text">滑动步长 · {{swipeStep}} 句</text>
+      </div>
+      <div class="opt" @click="cycleIdle">
+        <text class="opt-text">浏览停留 · {{browseIdle}} 秒</text>
+      </div>
+      <div class="opt" @click="toggleProgress">
+        <text class="opt-text">显示进度条 · {{showProgress ? '开' : '关'}}</text>
       </div>
       <text class="tip">字号三档：小 / 中 / 大，播放页和全屏歌词同步生效</text>
-      <text class="tip">滑动步长：一次上下滑翻几句，默认 1 句</text>
+      <text class="tip">浏览停留：手动翻歌词后，到点自动回到当前句</text>
+    </div>
+
+    <!-- 更多 -->
+    <div class="body" if="{{tab === 3}}">
+      <div class="opt" @click="cycleOffsetStep">
+        <text class="opt-text">偏移步进 · {{offsetStepText}}</text>
+      </div>
+      <div class="opt opt-danger" @click="resetAll">
+        <text class="opt-text opt-text-danger">恢复默认设置</text>
+      </div>
+      <text class="tip">偏移步进：歌词页点一次 +/- 调整多少秒</text>
+      <text class="tip">弧光歌词 ARCLYRIC · v{{version}}</text>
+      <text class="tip">手环只负责显示与控制，音频始终由手机播放</text>
     </div>
   </div>
 </template>
@@ -75,6 +97,7 @@
 <script>
 import router from '@system.router'
 import vibrator from '@system.vibrator'
+import prompt from '@system.prompt'
 import player from '../../common/scripts/player-state.js'
 import transport from '../../common/scripts/transport.js'
 import debug from '../../common/scripts/debug.js'
@@ -92,6 +115,10 @@ export default {
     vibrate: true,
     fontSize: 1,
     swipeStep: 1,
+    browseIdle: 6,
+    showProgress: true,
+    offsetStep: 500,
+    offsetStepText: '0.5s',
     fontLabel: '中',
     offsetText: '0.0s',
     statusText: '演示模式',
@@ -104,6 +131,10 @@ export default {
     debug.mark('page:settings', 'onInit')
     try {
       this.unsubscribe = player.subscribe(function (reason, view) {
+        // 每秒 tick 与设置无关，跳过可省掉整页重渲染
+        if (reason === 'tick') {
+          return
+        }
         this.apply(view)
       }.bind(this))
       player.init().then(function () {
@@ -135,6 +166,10 @@ export default {
     this.vibrate = view.vibrate !== false
     this.fontSize = typeof view.fontSize === 'number' ? view.fontSize : 1
     this.swipeStep = Math.max(1, Math.min(3, Number(view.swipeStep) || 1))
+    this.browseIdle = Math.max(3, Math.min(10, Math.round(Number(view.browseIdle) || 6)))
+    this.showProgress = view.showProgress !== false
+    this.offsetStep = Math.max(100, Math.min(1000, Number(view.offsetStep) || 500))
+    this.offsetStepText = (this.offsetStep / 1000).toFixed(1) + 's'
     this.fontLabel = FONT_LABELS[this.fontSize] || '中'
     this.offsetText = view.offsetText
     if (view.connected) {
@@ -209,6 +244,29 @@ export default {
     this.buzz()
     const next = this.swipeStep >= 3 ? 1 : this.swipeStep + 1
     player.setSwipeStep(next)
+  },
+  cycleIdle() {
+    this.buzz()
+    const next = this.browseIdle >= 10 ? 3 : this.browseIdle + 1
+    player.setBrowseIdle(next)
+  },
+  toggleProgress() {
+    this.buzz()
+    player.setShowProgress(!this.showProgress)
+  },
+  cycleOffsetStep() {
+    this.buzz()
+    const options = [100, 300, 500, 1000]
+    const index = options.indexOf(this.offsetStep)
+    const next = options[(index + 1) % options.length]
+    player.setOffsetStep(next)
+  },
+  resetAll() {
+    this.buzz()
+    player.resetSettings()
+    try {
+      prompt.showToast({ message: '已恢复默认设置', duration: 1500 })
+    } catch (e) {}
   },
   offsetBack() {
     this.buzz()
@@ -388,6 +446,13 @@ export default {
   line-height: 26dp;
   font-weight: bold;
   color: #dfe8f2;
+}
+.opt-danger {
+  background-color: #1b1114;
+  border-color: #3a1f24;
+}
+.opt-text-danger {
+  color: #ff8a8a;
 }
 .opt-label {
   width: 100%;

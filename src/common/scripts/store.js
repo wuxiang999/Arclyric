@@ -10,7 +10,11 @@ const DEFAULTS = {
   // 显示相关：字号 0 小 / 1 中 / 2 大；每次滑动翻几句；是否振动
   fontSize: 1,
   swipeStep: 1,
-  vibrate: true
+  vibrate: true,
+  // 浏览歌词后多久自动回到当前句（秒）；偏移按钮的步进（毫秒）；是否显示进度条
+  browseIdle: 6,
+  offsetStep: 500,
+  showProgress: true
 }
 
 function readValue(data) {
@@ -83,12 +87,12 @@ async function load() {
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i]
     const raw = await get('lyric.' + key)
-    if (key === 'mock' || key === 'autoSave' || key === 'follow' || key === 'vibrate') {
+    if (key === 'mock' || key === 'autoSave' || key === 'follow' || key === 'vibrate' || key === 'showProgress') {
       result[key] = toBool(raw, DEFAULTS[key])
-    } else if (key === 'offset' || key === 'lastOffset') {
+    } else if (key === 'offset' || key === 'lastOffset' || key === 'offsetStep') {
       const n = Number(raw)
       result[key] = isNaN(n) ? DEFAULTS[key] : n
-    } else if (key === 'fontSize' || key === 'swipeStep') {
+    } else if (key === 'fontSize' || key === 'swipeStep' || key === 'browseIdle') {
       const n = Number(raw)
       result[key] = isNaN(n) || raw === '' ? DEFAULTS[key] : n
     } else if (key === 'lineHeight') {

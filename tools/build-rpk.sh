@@ -8,15 +8,15 @@
 #   PC/Mac 上用 AIoT-IDE 或 `npm run build` / `npm run release` 即可，无需本脚本。
 #
 # 用法：
-#   bash tools/build-rpk.sh debug     # 调试签名，输出 dist/Arclyric-1.0.0-debug.rpk
-#   bash tools/build-rpk.sh release   # 正式签名，输出 dist/Arclyric-1.0.0-release.rpk
+#   bash tools/build-rpk.sh debug     # 调试签名，输出 dist/Arclyric-1.0.1-debug.rpk
+#   bash tools/build-rpk.sh release   # 正式签名，输出 dist/Arclyric-1.0.1-release.rpk
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TOOLCHAIN="$ROOT/.tmp/toolchain"
 KIT="$TOOLCHAIN/node_modules/aiot-toolkit/bin/index.js"
 KEEP="$ROOT/.tmp/dist-keep"
-VERSION="$(node -e "console.log(require('$ROOT/package.json').version)" 2>/dev/null || echo 1.0.0)"
+VERSION="$(node -e "console.log(require('$ROOT/package.json').version)" 2>/dev/null || echo 1.0.1)"
 PKG="com.vela.lyricplayer"
 
 MODE="${1:-release}"

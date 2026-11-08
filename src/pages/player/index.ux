@@ -33,19 +33,21 @@
       </block>
       <block if="{{!loading}}">
         <text class="lyric-row {{$item.cls}}" for="{{rows}}" @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @swipe="onSwipe" @click="onLyricTap">{{$item.text}}</text>
-        <text class="lyric-hint" if="{{browsing}}" @click="onLyricTap">轻触回到当前句</text>
+        <text class="lyric-hint" if="{{hintOn}}" @click="onLyricTap">轻触回到当前句</text>
       </block>
     </div>
 
-    <div class="progress">
-      <div class="track">
-        <div class="fill fill-w{{barLevel}}"></div>
+    <block if="{{showProgress}}">
+      <div class="progress">
+        <div class="track">
+          <div class="fill fill-w{{barLevel}}"></div>
+        </div>
       </div>
-    </div>
-    <div class="times">
-      <text class="time">{{positionText}}</text>
-      <text class="time">{{durationText}}</text>
-    </div>
+      <div class="times">
+        <text class="time">{{positionText}}</text>
+        <text class="time">{{durationText}}</text>
+      </div>
+    </block>
 
     <div class="controls">
       <div class="ctrl ctrl-side" @click="onPrev">
@@ -88,11 +90,16 @@ const OFF_SIZE = [11, 12.5, 14]
 // 屏幕 192 逻辑宽 - 左右各 11 内边距 = 170，再让 2dp 给渲染误差
 const LYRIC_WIDTH = 168
 const SIZE_KEY = ['s', 'm', 'l']
+// 每行实际占高 = line-height + 上下各 1dp 内边距，和 CSS 严格对应
+const ON_H = [22, 25, 27]
+const OFF_H = [18, 20, 22]
+// 歌词区可用高度：显示进度条时 110dp，隐藏时多出 24dp
+const LYRIC_BUDGET = [110, 134]
+const HINT_H = 16
 
 function unitsFor(size) {
   return Math.max(6, Math.floor((LYRIC_WIDTH / size) * 0.96))
 }
-const BROWSE_IDLE_MS = 6000
 
 export default {
   data: {
@@ -108,9 +115,11 @@ export default {
     statusText: '演示模式',
     rows: [{ text: '等待歌词', cls: 'on-m' }],
     browsing: false,
+    hintOn: false,
     fontSize: 1,
     swipeStep: 1,
     vibrateOn: true,
+    showProgress: true,
     loading: true,
     loadingText: '正在准备',
     dots: '',
@@ -133,22 +142,18 @@ export default {
     this.swiped = false
     this.swipedAt = 0
     this.lastBrowseAt = 0
+    this.lastOpenAt = 0
+    this.browseIdleMs = 6000
     this.browseTimer = null
-    // Vela 没有 CSS 动画，加载动效只能靠定时器换帧
-    this.loadTimer = setInterval(() => {
-      const step = (this.dotStep + 1) % 4
-      this.dotStep = step
-      this.dots = step === 0 ? '' : step === 1 ? '·' : step === 2 ? '··' : '···'
-      const seq = [20, 40, 60, 80, 60, 40]
-      this.loadStep = (this.loadStep + 1) % seq.length
-      this.loadWidth = seq[this.loadStep]
-    }, 320)
+    this.loadTimer = null
+    // Vela 没有 CSS 动画，加载动效只能靠定时器换帧；加载结束就停，别常驻
+    this.startLoadTimer()
     try {
       this.unsubscribe = player.subscribe((reason, view) => {
-        this.apply(view)
+        this.apply(view, reason)
       })
       player.init().then(() => {
-        this.apply(player.snapshot())
+        this.apply(player.snapshot(), 'ready')
         debug.mark('page:player', '数据已应用')
       }).catch((err) => {
         debug.error('page:player', 'player.init', err)
@@ -160,10 +165,30 @@ export default {
   onShow() {
     debug.mark('page:player', 'onShow')
     try {
-      this.apply(player.snapshot())
+      this.apply(player.snapshot(), 'show')
     } catch (e) {
       debug.error('page:player', 'onShow', e)
     }
+  },
+  startLoadTimer() {
+    if (this.loadTimer) {
+      return
+    }
+    this.loadTimer = setInterval(() => {
+      const step = (this.dotStep + 1) % 4
+      this.dotStep = step
+      this.dots = step === 0 ? '' : step === 1 ? '·' : step === 2 ? '··' : '···'
+      const seq = [20, 40, 60, 80, 60, 40]
+      this.loadStep = (this.loadStep + 1) % seq.length
+      this.loadWidth = seq[this.loadStep]
+    }, 320)
+  },
+  stopLoadTimer() {
+    if (this.loadTimer) {
+      clearInterval(this.loadTimer)
+      this.loadTimer = null
+    }
+    this.dots = ''
   },
   onDestroy() {
     if (this.unsubscribe) {
@@ -186,8 +211,17 @@ export default {
     const value = String(text).trim()
     return value.length > max ? value.slice(0, max - 1) + '…' : value
   },
-  apply(view) {
-    this.title = this.shorten(view.title || '未在播放', 10)
+  apply(view, reason) {
+    // 每秒的 tick 只更新进度，不重建歌词行：手环内存小，重建会掉帧
+    if (reason === 'tick') {
+      this.percent = view.percent
+      this.barLevel = Math.round((Number(view.percent) || 0) / 10) * 10
+      this.positionText = view.positionText
+      this.durationText = view.durationText
+      this.playing = view.playing
+      return
+    }
+    this.title = this.shorten(view.title || '未在播放', 8)
     this.artist = this.shorten(view.artist || (view.mock ? '演示曲目' : '未知歌手'), 13)
     this.percent = view.percent
     this.barLevel = Math.round((Number(view.percent) || 0) / 10) * 10
@@ -196,6 +230,9 @@ export default {
     this.playing = view.playing
     this.connected = view.connected
     this.mock = view.mock
+    this.showProgress = view.showProgress !== false
+    const idle = Number(view.browseIdle) || 6
+    this.browseIdleMs = Math.max(3, Math.min(10, Math.round(idle))) * 1000
 
     const lines = view.lines || []
     const receiving = !!view.transferActive && !view.mock
@@ -226,11 +263,11 @@ export default {
     if (!this.browsing) {
       this.focus = view.lyricIndex
     }
-    this.buildRows()
-
+    // 字号必须先更新再重建行，否则切换字号会慢一拍
     this.fontSize = typeof view.fontSize === 'number' ? view.fontSize : 1
     this.swipeStep = Math.max(1, Math.min(3, Number(view.swipeStep) || 1))
     this.vibrateOn = view.vibrate !== false
+    this.buildRows()
 
     if (view.connected) {
       this.statusText = '已连接手机'
@@ -239,37 +276,53 @@ export default {
     } else {
       this.statusText = '等待连接'
     }
+    if (this.loading) {
+      this.startLoadTimer()
+    } else {
+      this.stopLoadTimer()
+    }
   },
-  // 焦点句 + 前后各一句，逐行手工折行；行高固定，两行的句子不会被裁
+  // 焦点句 + 前后各一句，逐行手工折行。
+  // 关键：按「可用高度」决定放几行，绝不靠 flex 压缩 —— 那正是文字被吞一截的原因。
   buildRows() {
     const lines = this.lines || []
-    const rows = []
     const size = Math.max(0, Math.min(2, this.fontSize || 0))
     const key = SIZE_KEY[size]
     const curUnits = unitsFor(ON_SIZE[size])
     const sideUnits = unitsFor(OFF_SIZE[size])
+    const onH = ON_H[size]
+    const offH = OFF_H[size]
+    const budget = this.showProgress ? LYRIC_BUDGET[0] : LYRIC_BUDGET[1]
     if (!lines.length) {
+      this.hintOn = false
       this.rows = [{ text: '暂无歌词', cls: 'on-' + key }]
       return
     }
     const index = Math.max(0, Math.min(lines.length - 1, this.focus))
-    if (index > 0) {
-      const prev = lrc.wrap(lines[index - 1].text, sideUnits, 1)[0]
-      if (prev) {
-        rows.push({ text: prev, cls: 'off-' + key })
-      }
+    const curRows = lrc.wrap(lines[index].text, curUnits, 4)
+    if (!curRows.length) {
+      curRows.push('')
     }
-    const current = lrc.wrap(lines[index].text, curUnits, 2)
-    const curRows = current.length ? current : ['']
+    let used = curRows.length * onH
+    // 浏览态的提示行也参与高度预算，放不下就不显示
+    const showHint = this.browsing && used + HINT_H <= budget
+    if (showHint) {
+      used += HINT_H
+    }
+    const prevText = index > 0 ? lrc.wrap(lines[index - 1].text, sideUnits, 1)[0] : ''
+    const nextText = index < lines.length - 1 ? lrc.wrap(lines[index + 1].text, sideUnits, 1)[0] : ''
+    const rows = []
+    if (prevText && used + offH <= budget) {
+      rows.push({ text: prevText, cls: 'off-' + key })
+      used += offH
+    }
     for (let i = 0; i < curRows.length; i++) {
       rows.push({ text: curRows[i], cls: 'on-' + key })
     }
-    if (index < lines.length - 1) {
-      const next = lrc.wrap(lines[index + 1].text, sideUnits, 1)[0]
-      if (next) {
-        rows.push({ text: next, cls: 'off-' + key })
-      }
+    if (nextText && used + offH <= budget) {
+      rows.push({ text: nextText, cls: 'off-' + key })
     }
+    this.hintOn = showHint
     this.rows = rows
   },
   onTouchStart(evt) {
@@ -372,7 +425,7 @@ export default {
       this.browsing = false
       this.focus = player.snapshot().lyricIndex
       this.buildRows()
-    }, BROWSE_IDLE_MS)
+    }, this.browseIdleMs || 6000)
   },
   onLyricTap() {
     // 滑动结束系统还会补一个 click：吞掉它，否则每滑一次都会被带去歌词页
@@ -431,6 +484,12 @@ export default {
     } catch (e) {}
   },
   openLyrics() {
+    // 外层容器和歌词行都可能触发 click，600ms 内只跳一次，避免压两层歌词页
+    const now = Date.now()
+    if (now - (this.lastOpenAt || 0) < 600) {
+      return
+    }
+    this.lastOpenAt = now
     router.push({ uri: '/pages/lyrics' })
   },
   openBook() {
@@ -457,7 +516,7 @@ export default {
   flex-grow: 0;
   flex-shrink: 0;
   width: 100%;
-  height: 18dp;
+  height: 16dp;
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
@@ -506,22 +565,24 @@ export default {
   flex-grow: 0;
   flex-shrink: 0;
   width: 100%;
-  margin-top: 4dp;
+  margin-top: 2dp;
   flex-direction: column;
   align-items: center;
 }
 .title {
+  lines: 1;
   width: 100%;
   font-size: 19dp;
-  line-height: 25dp;
+  line-height: 26dp;
   font-weight: bold;
   color: #eef4fb;
   text-align: center;
 }
 .artist {
+  lines: 1;
   width: 100%;
   font-size: 11.5dp;
-  line-height: 15dp;
+  line-height: 16dp;
   font-weight: bold;
   color: #8fa0b5;
   text-align: center;
@@ -545,15 +606,15 @@ export default {
 }
 .off-s {
   font-size: 11dp;
-  line-height: 18dp;
+  line-height: 16dp;
 }
 .off-m {
   font-size: 12.5dp;
-  line-height: 20dp;
+  line-height: 18dp;
 }
 .off-l {
   font-size: 14dp;
-  line-height: 22dp;
+  line-height: 20dp;
 }
 .on-s {
   font-size: 14.5dp;
@@ -562,12 +623,12 @@ export default {
 }
 .on-m {
   font-size: 16.5dp;
-  line-height: 22dp;
+  line-height: 23dp;
   color: #6ef3c5;
 }
 .on-l {
   font-size: 18dp;
-  line-height: 24dp;
+  line-height: 25dp;
   color: #6ef3c5;
 }
 .loading-text {
@@ -607,7 +668,7 @@ export default {
   flex-grow: 0;
   flex-shrink: 0;
   width: 100%;
-  margin-top: 4dp;
+  margin-top: 2dp;
   height: 6dp;
   justify-content: center;
 }
@@ -665,6 +726,7 @@ export default {
 }
 .time {
   font-size: 10.5dp;
+  line-height: 15dp;
   font-weight: bold;
   color: #4f6074;
 }
@@ -672,14 +734,14 @@ export default {
   flex-grow: 0;
   flex-shrink: 0;
   width: 100%;
-  margin-top: 4dp;
-  height: 42dp;
+  margin-top: 3dp;
+  height: 38dp;
   flex-direction: row;
   align-items: center;
 }
 .ctrl {
-  height: 42dp;
-  border-radius: 21dp;
+  height: 38dp;
+  border-radius: 19dp;
   align-items: center;
   justify-content: center;
   background-color: #0e151e;
@@ -711,21 +773,21 @@ export default {
   flex-grow: 0;
   flex-shrink: 0;
   width: 100%;
-  margin-top: 4dp;
-  height: 28dp;
+  margin-top: 3dp;
+  height: 24dp;
   flex-direction: row;
   justify-content: space-between;
 }
 .seek {
   width: 48%;
-  height: 28dp;
-  border-radius: 14dp;
+  height: 24dp;
+  border-radius: 12dp;
   align-items: center;
   justify-content: center;
   background-color: #0b121a;
 }
 .seek-icon {
-  width: 16dp;
-  height: 16dp;
+  width: 15dp;
+  height: 15dp;
 }
 </style>

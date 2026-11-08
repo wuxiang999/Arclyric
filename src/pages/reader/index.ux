@@ -186,7 +186,8 @@ export default {
     const starts = []
     for (let i = 0; i < this.lines.length; i++) {
       starts.push(rows.length)
-      const parts = lrc.wrap(this.lines[i].text, 10, 1)
+      // 一行放不下就折成两行，长句完整显示，不再被省略号截掉
+      const parts = lrc.wrap(this.lines[i].text, 10, 2)
       const texts = parts.length ? parts : ['']
       for (let j = 0; j < texts.length; j++) {
         rows.push({
@@ -232,6 +233,10 @@ export default {
     this.pageInfo = (this.page + 1) + '/' + this.pageCount
   },
   vibrate() {
+    // 尊重「操作振动」开关
+    if (player.snapshot().vibrate === false) {
+      return
+    }
     try {
       vibrator.vibrate({ mode: 'short' })
     } catch (e) {}
@@ -272,7 +277,9 @@ export default {
     this.follow = !this.follow
     player.setFollow(this.follow)
     if (this.follow && this.isCurrent && this.currentIndex >= 0) {
-      this.page = Math.min(this.pageCount - 1, Math.floor(this.currentIndex / this.pageSize))
+      // 一页 8 行是按「显示行」算的，必须用该句的行起点，不能用歌词序号
+      const start = this.lineRowStart[this.currentIndex] || 0
+      this.page = Math.min(this.pageCount - 1, Math.floor(start / this.pageSize))
       this.buildPage()
     }
   },
@@ -343,13 +350,17 @@ export default {
   flex-direction: column;
 }
 .song-title {
+  lines: 1;
   font-size: 14.5dp;
+  line-height: 20dp;
   font-weight: bold;
   color: #eef4fb;
 }
 .song-artist {
+  lines: 1;
   margin-top: 0.5dp;
   font-size: 10.5dp;
+  line-height: 14dp;
   font-weight: bold;
   color: #63748a;
 }

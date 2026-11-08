@@ -27,13 +27,15 @@
       </div>
 
       <div class="list" if="{{total > 0}}">
+        <!-- 只在外层绑一次 click：以前五层都绑，事件冒泡让一次点击被当成两次，
+             管理模式下「再点一次确认删除」直接变成首点即删。 -->
         <div class="row" for="{{items}}" @click="onItem($item)">
           <div class="dot"></div>
-          <div class="row-main" @click="onItem($item)">
-            <text class="row-title" @click="onItem($item)">{{$item.displayTitle}}</text>
-            <text class="row-sub" @click="onItem($item)">{{$item.displayArtist}}</text>
+          <div class="row-main">
+            <text class="row-title">{{$item.displayTitle}}</text>
+            <text class="row-sub">{{$item.displayArtist}}</text>
           </div>
-          <text class="row-action {{$item.confirm ? 'row-action-danger' : ''}}" @click="onItem($item)">{{manage ? ($item.confirm ? '确认' : '删除') : '›'}}</text>
+          <text class="row-action {{$item.confirm ? 'row-action-danger' : ''}}">{{manage ? ($item.confirm ? '确认' : '删除') : '›'}}</text>
         </div>
       </div>
 
@@ -52,7 +54,7 @@
         <text class="empty-title">词本还是空的</text>
         <text class="empty-desc">接收手机歌词会自动保存，也可以先载入示例</text>
         <div class="chip" @click="loadDemo">
-          <text class="chip-text" @click="loadDemo">载入示例歌词</text>
+          <text class="chip-text">载入示例歌词</text>
         </div>
       </div>
       </block>
@@ -101,11 +103,11 @@ import debug from '../../common/scripts/debug.js'
 
 // 一页 5 行：行高 34dp，加上顶栏和翻页条刚好一屏，不用滚动
 const PAGE_SIZE = 5
-// 阅读页一页 7 行，行高 20dp
-const READ_SIZE = 7
-// 172dp 可用宽 / 13dp 字号 ≈ 13 个字，再留 1 个字余量。
-// 之前写 16 会让每一行再折一次，第二行被 20dp 的行高直接切掉。
-const READ_UNITS = 12
+// 阅读页一页 9 行，行高 20dp（内容区约 198dp，留出翻页条）
+const READ_SIZE = 9
+// 172dp 可用宽 / 13dp 字号 ≈ 13 个字。
+// 一句最多折成 2 行，长句不再被省略号截断。
+const READ_UNITS = 13
 
 export default {
   data: {
@@ -134,6 +136,14 @@ export default {
   },
   onInit() {
     debug.mark('page:book', 'onInit')
+    this.loadTimer = null
+    this.startLoadTimer()
+    this.load()
+  },
+  startLoadTimer() {
+    if (this.loadTimer) {
+      return
+    }
     // Vela 没有 CSS 动画，用定时器换帧做加载动效
     this.loadTimer = setInterval(() => {
       const step = (this.dotStep + 1) % 4
@@ -143,13 +153,16 @@ export default {
       this.loadStep = (this.loadStep + 1) % seq.length
       this.loadWidth = seq[this.loadStep]
     }, 320)
-    this.load()
   },
-  onDestroy() {
+  stopLoadTimer() {
     if (this.loadTimer) {
       clearInterval(this.loadTimer)
       this.loadTimer = null
     }
+    this.dots = ''
+  },
+  onDestroy() {
+    this.stopLoadTimer()
   },
   onShow() {
     if (!this.detail) {
@@ -161,6 +174,7 @@ export default {
     if (first) {
       this.loadingText = '正在读取词库'
       this.loading = true
+      this.startLoadTimer()
     }
     try {
       const list = await library.list()
@@ -175,6 +189,7 @@ export default {
       debug.error('page:book', 'load', e)
     }
     this.loading = false
+    this.stopLoadTimer()
   },
   refresh() {
     const start = this.page * PAGE_SIZE
@@ -241,19 +256,21 @@ export default {
     this.busy = true
     this.loadingText = '正在打开歌词'
     this.loading = true
+    this.startLoadTimer()
     this.detail = true
     this.dTitle = this.shorten(item.title || '未命名', 12)
     this.dArtist = item.artist || ''
     this.dRows = []
     this.dView = []
+    let rows = []
     try {
       const text = await library.read(item.key)
       debug.mark('page:book', '打开 ' + item.title + ' ' + text.length + ' 字')
-      const rows = []
       if (text) {
         const parsed = lrc.parse(text, item.title, item.artist)
         for (let i = 0; i < parsed.lines.length; i++) {
-          const parts = lrc.wrap(parsed.lines[i].text, READ_UNITS, 1)
+          // 一句最多折两行：长句在歌词本里也能完整读到，而不是被省略号砍掉
+          const parts = lrc.wrap(parsed.lines[i].text, READ_UNITS, 2)
           const list = parts.length ? parts : ['']
           for (let j = 0; j < list.length; j++) {
             rows.push({ text: list[j] })
@@ -263,17 +280,19 @@ export default {
       if (!rows.length) {
         rows.push({ text: '这首歌的歌词读不出来，让手机重新推一次试试' })
       }
-      this.dTitle = this.shorten((item.title || '未命名') + (item.artist ? ' · ' + item.artist : ''), 12)
-      this.dArtist = item.artist || ''
-      this.dRows = rows
-      this.dPage = 0
-      this.dPageCount = Math.max(1, Math.ceil(rows.length / READ_SIZE))
-      this.dView = rows.slice(0, READ_SIZE)
-      this.detail = true
     } catch (e) {
       debug.error('page:book', 'openDetail', e)
+      // 读取失败也要给出可见内容，不能留一页空白让人以为卡死
+      rows = [{ text: '打开失败，请返回列表重试' }]
     }
+    this.dTitle = this.shorten((item.title || '未命名') + (item.artist ? ' · ' + item.artist : ''), 12)
+    this.dArtist = item.artist || ''
+    this.dRows = rows
+    this.dPage = 0
+    this.dPageCount = Math.max(1, Math.ceil(rows.length / READ_SIZE))
+    this.dView = rows.slice(0, READ_SIZE)
     this.loading = false
+    this.stopLoadTimer()
     this.busy = false
   },
   closeDetail() {
@@ -427,6 +446,7 @@ export default {
   color: #63748a;
 }
 .row-action {
+  lines: 1;
   font-size: 11.5dp;
   line-height: 20dp;
   font-weight: bold;

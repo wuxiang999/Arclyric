@@ -29,6 +29,9 @@ const state = {
   fontSize: 1,
   swipeStep: 1,
   vibrate: true,
+  browseIdle: 6,
+  offsetStep: 500,
+  showProgress: true,
   currentKey: '',
   currentSong: '',
   lastError: '',
@@ -149,6 +152,9 @@ function snapshot() {
     fontSize: state.fontSize,
     swipeStep: state.swipeStep,
     vibrate: state.vibrate,
+    browseIdle: state.browseIdle,
+    offsetStep: state.offsetStep,
+    showProgress: state.showProgress,
     currentKey: state.currentKey,
     transferActive: transfer.id !== '' && transfer.received < transfer.total,
     transferReceived: transfer.received,
@@ -247,7 +253,8 @@ async function handleLyrics(payload) {
   let key = ''
   if (p.persist && state.autoSave && text) {
     try {
-      key = await library.save(title, artist, text.slice(0, 3000))
+      // 存全文：之前只存前 3000 字，长歌在歌词本里会莫名少一大截
+      key = await library.save(title, artist, text)
     } catch (e) {
       debug.error('lyrics', 'library.save', e)
     }
@@ -557,6 +564,50 @@ function setVibrate(enabled) {
   emit('settings')
 }
 
+function setBrowseIdle(seconds) {
+  state.browseIdle = clampInt(seconds, 3, 10, 6)
+  store.save('browseIdle', state.browseIdle)
+  emit('settings')
+}
+
+function setOffsetStep(ms) {
+  state.offsetStep = clampInt(ms, 100, 1000, 500)
+  store.save('offsetStep', state.offsetStep)
+  emit('settings')
+}
+
+function setShowProgress(enabled) {
+  state.showProgress = !!enabled
+  store.save('showProgress', enabled ? '1' : '0')
+  emit('settings')
+}
+
+// 恢复默认设置：只还原播放/显示偏好，不动演示模式与当前连接，
+// 避免用户点一下就被切回演示曲目。
+function resetSettings() {
+  const d = store.DEFAULTS
+  state.follow = d.follow !== false
+  state.autoSave = d.autoSave !== false
+  state.vibrate = d.vibrate !== false
+  state.fontSize = clampInt(d.fontSize, 0, 2, 1)
+  state.swipeStep = clampInt(d.swipeStep, 1, 3, 1)
+  state.browseIdle = clampInt(d.browseIdle, 3, 10, 6)
+  state.offsetStep = clampInt(d.offsetStep, 100, 1000, 500)
+  state.showProgress = d.showProgress !== false
+  state.offsetMs = 0
+  store.save('follow', state.follow ? '1' : '0')
+  store.save('autoSave', state.autoSave ? '1' : '0')
+  store.save('vibrate', state.vibrate ? '1' : '0')
+  store.save('fontSize', state.fontSize)
+  store.save('swipeStep', state.swipeStep)
+  store.save('browseIdle', state.browseIdle)
+  store.save('offsetStep', state.offsetStep)
+  store.save('showProgress', state.showProgress ? '1' : '0')
+  store.save('offset', 0)
+  state.lyricIndex = computeIndex()
+  emit('settings')
+}
+
 function setFollow(enabled) {
   state.follow = !!enabled
   store.save('follow', enabled ? '1' : '0')
@@ -623,9 +674,20 @@ async function init() {
     state.fontSize = clampInt(settings.fontSize, 0, 2, 1)
     state.swipeStep = clampInt(settings.swipeStep, 1, 3, 1)
     state.vibrate = settings.vibrate !== false
+    state.browseIdle = clampInt(settings.browseIdle, 3, 10, 6)
+    state.offsetStep = clampInt(settings.offsetStep, 100, 1000, 500)
+    state.showProgress = settings.showProgress !== false
+    // 示例歌词只在「第一次安装」时写进词库一次。
+    // 以前每次启动都 seed，用户删掉的示例会被原样写回来，表现为歌词本删不掉。
     try {
-      await library.seed(demo.demos)
-      debug.mark('init', 'library.seed 完成')
+      const seeded = await store.get('lyric.seeded')
+      if (seeded !== '1') {
+        await library.seed(demo.demos)
+        await store.save('seeded', '1')
+        debug.mark('init', 'library.seed 完成（首次）')
+      } else {
+        debug.mark('init', 'library.seed 跳过（已初始化过）')
+      }
     } catch (e) {
       debug.error('init', 'library.seed', e)
     }
@@ -832,6 +894,10 @@ export default {
   setFontSize: setFontSize,
   setSwipeStep: setSwipeStep,
   setVibrate: setVibrate,
+  setBrowseIdle: setBrowseIdle,
+  setOffsetStep: setOffsetStep,
+  setShowProgress: setShowProgress,
+  resetSettings: resetSettings,
   saveCurrentLyrics: saveCurrentLyrics,
   loadLyricsFor: loadLyricsFor,
   sendLibrary: sendLibrary
