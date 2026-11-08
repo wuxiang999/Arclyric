@@ -1,0 +1,91 @@
+<template>
+  <div class="page">
+    <text class="logo">弧光歌词</text>
+    <text class="sub">ARCLYRIC</text>
+    <div class="btn" @click="go('/pages/player')">
+      <text class="btn-t">播放器</text>
+    </div>
+    <div class="btn btn-ghost" @click="go('/pages/book')">
+      <text class="btn-t btn-t-ghost">歌词本</text>
+    </div>
+    <div class="btn btn-ghost" @click="go('/pages/settings')">
+      <text class="btn-t btn-t-ghost">设置</text>
+    </div>
+    <text class="ver">v1.0.1</text>
+  </div>
+</template>
+
+<script>
+import router from '@system.router'
+import debug from '../../common/scripts/debug.js'
+
+export default {
+  data: {
+    ready: true
+  },
+  onInit() {
+    debug.mark('page:boot', 'onInit 渲染成功')
+  },
+  onShow() {
+    debug.mark('page:boot', 'onShow')
+  },
+  go(uri) {
+    debug.mark('page:boot', '跳转 ' + uri)
+    router.push({ uri: uri })
+  }
+}
+</script>
+
+<style>
+.page {
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: #070b10;
+}
+.logo {
+  font-size: 31dp;
+  font-weight: bold;
+  color: #eef4fb;
+}
+.sub {
+  margin-top: 2dp;
+  font-size: 12.5dp;
+  font-weight: bold;
+  color: #6ef3c5;
+}
+.btn {
+  width: 150dp;
+  height: 42dp;
+  margin-top: 8dp;
+  border-radius: 21dp;
+  align-items: center;
+  justify-content: center;
+  background-color: #6ef3c5;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #6ef3c5;
+}
+.btn-ghost {
+  background-color: #0e151e;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #1c2836;
+}
+.btn-t {
+  font-size: 16dp;
+  font-weight: bold;
+  color: #04241c;
+}
+.btn-t-ghost {
+  color: #b9c6d6;
+}
+.ver {
+  margin-top: 14dp;
+  font-size: 11.5dp;
+  font-weight: bold;
+  color: #4f6074;
+}
+</style>

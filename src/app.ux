@@ -1,0 +1,19 @@
+<script>
+import debug from './common/scripts/debug.js'
+
+try {
+  debug.boot()
+} catch (e) {}
+
+export default {
+  onCreate() {
+    debug.mark('app', 'onCreate')
+  },
+  onShow() {
+    debug.mark('app', 'onShow')
+  },
+  onError(err) {
+    debug.error('app', 'onError', err)
+  }
+}
+</script>

@@ -1,0 +1,571 @@
+<template>
+  <div class="page">
+    <div class="header">
+      <div class="back" @click="goBack">
+        <image class="back-icon" src="/common/images/ic_back.png"></image>
+      </div>
+      <text class="header-title">歌词本</text>
+      <text class="manage" if="{{!detail}}" @click="toggleManage">{{manage ? '完成' : '管理'}}</text>
+      <text class="manage" if="{{detail}}" @click="closeDetail">返回列表</text>
+    </div>
+
+    <!-- 列表 -->
+    <div class="body" if="{{!detail}}">
+      <block if="{{loading}}">
+        <div class="loading-box">
+          <text class="loading-text">{{loadingText}}{{dots}}</text>
+          <div class="loading-track">
+            <div class="fill fill-w{{loadWidth}}"></div>
+          </div>
+        </div>
+      </block>
+      <block if="{{!loading}}">
+      <div class="info">
+        <text class="info-text">共 {{total}} 首 · 本地词库</text>
+        <text class="info-hint" if="{{manage}}">再次点击删除</text>
+        <text class="info-page" if="{{!manage}}">{{page + 1}}/{{pageCount}}</text>
+      </div>
+
+      <div class="list" if="{{total > 0}}">
+        <div class="row" for="{{items}}" @click="onItem($item)">
+          <div class="dot"></div>
+          <div class="row-main" @click="onItem($item)">
+            <text class="row-title" @click="onItem($item)">{{$item.displayTitle}}</text>
+            <text class="row-sub" @click="onItem($item)">{{$item.displayArtist}}</text>
+          </div>
+          <text class="row-action {{$item.confirm ? 'row-action-danger' : ''}}" @click="onItem($item)">{{manage ? ($item.confirm ? '确认' : '删除') : '›'}}</text>
+        </div>
+      </div>
+
+      <div class="pager" if="{{total > pageSize}}">
+        <div class="pager-btn {{page <= 0 ? 'pager-off' : ''}}" @click="prevPage">
+          <text class="pager-text">上一页</text>
+        </div>
+        <text class="pager-info">{{page + 1}} / {{pageCount}}</text>
+        <div class="pager-btn {{page >= pageCount - 1 ? 'pager-off' : ''}}" @click="nextPage">
+          <text class="pager-text">下一页</text>
+        </div>
+      </div>
+
+      <div class="empty" if="{{total === 0}}">
+        <text class="empty-icon">≡</text>
+        <text class="empty-title">词本还是空的</text>
+        <text class="empty-desc">接收手机歌词会自动保存，也可以先载入示例</text>
+        <div class="chip" @click="loadDemo">
+          <text class="chip-text" @click="loadDemo">载入示例歌词</text>
+        </div>
+      </div>
+      </block>
+    </div>
+
+    <!-- 阅读（不跳页，直接在本页展开，避免路由参数丢失导致打不开） -->
+    <div class="body" if="{{detail}}">
+      <block if="{{loading}}">
+        <div class="loading-box">
+          <text class="loading-text">{{loadingText}}{{dots}}</text>
+          <div class="loading-track">
+            <div class="fill fill-w{{loadWidth}}"></div>
+          </div>
+        </div>
+      </block>
+      <block if="{{!loading}}">
+      <div class="info">
+        <text class="info-text">{{dTitle}}</text>
+        <text class="info-page">{{dPage + 1}}/{{dPageCount}}</text>
+      </div>
+
+      <div class="lines">
+        <text class="line" for="{{dView}}">{{$item.text}}</text>
+      </div>
+
+      <div class="pager" if="{{dPageCount > 1}}">
+        <div class="pager-btn {{dPage <= 0 ? 'pager-off' : ''}}" @click="dPrev">
+          <text class="pager-text">上一页</text>
+        </div>
+        <text class="pager-info">{{dPage + 1}} / {{dPageCount}}</text>
+        <div class="pager-btn {{dPage >= dPageCount - 1 ? 'pager-off' : ''}}" @click="dNext">
+          <text class="pager-text">下一页</text>
+        </div>
+      </div>
+      </block>
+    </div>
+  </div>
+</template>
+
+<script>
+import router from '@system.router'
+import library from '../../common/scripts/library.js'
+import lrc from '../../common/scripts/lrc.js'
+import demo from '../../common/scripts/demo-lyrics.js'
+import debug from '../../common/scripts/debug.js'
+
+// 一页 5 行：行高 34dp，加上顶栏和翻页条刚好一屏，不用滚动
+const PAGE_SIZE = 5
+// 阅读页一页 7 行，行高 20dp
+const READ_SIZE = 7
+// 172dp 可用宽 / 13dp 字号 ≈ 13 个字，再留 1 个字余量。
+// 之前写 16 会让每一行再折一次，第二行被 20dp 的行高直接切掉。
+const READ_UNITS = 12
+
+export default {
+  data: {
+    all: [],
+    items: [],
+    total: 0,
+    page: 0,
+    pageCount: 1,
+    pageSize: PAGE_SIZE,
+    manage: false,
+    confirmKey: '',
+    detail: false,
+    dTitle: '',
+    dArtist: '',
+    dRows: [],
+    dView: [],
+    dPage: 0,
+    dPageCount: 1,
+    dPageSize: READ_SIZE,
+    loading: true,
+    loadingText: '正在读取词库',
+    dots: '',
+    loadWidth: 30,
+    dotStep: 0,
+    loadStep: 0
+  },
+  onInit() {
+    debug.mark('page:book', 'onInit')
+    // Vela 没有 CSS 动画，用定时器换帧做加载动效
+    this.loadTimer = setInterval(() => {
+      const step = (this.dotStep + 1) % 4
+      this.dotStep = step
+      this.dots = step === 0 ? '' : step === 1 ? '·' : step === 2 ? '··' : '···'
+      const seq = [20, 40, 60, 80, 60, 40]
+      this.loadStep = (this.loadStep + 1) % seq.length
+      this.loadWidth = seq[this.loadStep]
+    }, 320)
+    this.load()
+  },
+  onDestroy() {
+    if (this.loadTimer) {
+      clearInterval(this.loadTimer)
+      this.loadTimer = null
+    }
+  },
+  onShow() {
+    if (!this.detail) {
+      this.load()
+    }
+  },
+  async load() {
+    const first = !this.total
+    if (first) {
+      this.loadingText = '正在读取词库'
+      this.loading = true
+    }
+    try {
+      const list = await library.list()
+      this.all = list
+      this.total = list.length
+      if (this.page > 0 && this.page * PAGE_SIZE >= list.length) {
+        this.page = Math.max(0, Math.ceil(list.length / PAGE_SIZE) - 1)
+      }
+      this.refresh()
+      debug.mark('page:book', '载入 ' + list.length + ' 首')
+    } catch (e) {
+      debug.error('page:book', 'load', e)
+    }
+    this.loading = false
+  },
+  refresh() {
+    const start = this.page * PAGE_SIZE
+    const slice = this.all.slice(start, start + PAGE_SIZE)
+    this.items = slice.map((item) => {
+      return {
+        key: item.key,
+        title: item.title,
+        artist: item.artist,
+        displayTitle: this.shorten(item.title, 9),
+        displayArtist: item.artist ? this.shorten(item.artist, 12) : '未知歌手',
+        confirm: this.manage && this.confirmKey === item.key
+      }
+    })
+    this.pageCount = Math.max(1, Math.ceil(this.total / PAGE_SIZE))
+  },
+  shorten(text, max) {
+    const value = String(text || '')
+    return value.length > max ? value.slice(0, max - 1) + '…' : value
+  },
+  prevPage() {
+    if (this.page <= 0) {
+      return
+    }
+    this.page--
+    this.refresh()
+  },
+  nextPage() {
+    if (this.page >= this.pageCount - 1) {
+      return
+    }
+    this.page++
+    this.refresh()
+  },
+  toggleManage() {
+    this.manage = !this.manage
+    this.confirmKey = ''
+    this.refresh()
+  },
+  async onItem(item) {
+    if (!item || this.busy) {
+      return
+    }
+    if (this.manage) {
+      if (this.confirmKey !== item.key) {
+        this.confirmKey = item.key
+        this.refresh()
+        return
+      }
+      this.busy = true
+      await library.remove(item.key)
+      this.confirmKey = ''
+      this.busy = false
+      await this.load()
+      return
+    }
+    await this.openDetail(item)
+  },
+  // 直接在本页展开，不再依赖 router 参数 / storage，点开一定能看到内容
+  async openDetail(item) {
+    if (this.busy) {
+      return
+    }
+    this.busy = true
+    this.loadingText = '正在打开歌词'
+    this.loading = true
+    this.detail = true
+    this.dTitle = this.shorten(item.title || '未命名', 12)
+    this.dArtist = item.artist || ''
+    this.dRows = []
+    this.dView = []
+    try {
+      const text = await library.read(item.key)
+      debug.mark('page:book', '打开 ' + item.title + ' ' + text.length + ' 字')
+      const rows = []
+      if (text) {
+        const parsed = lrc.parse(text, item.title, item.artist)
+        for (let i = 0; i < parsed.lines.length; i++) {
+          const parts = lrc.wrap(parsed.lines[i].text, READ_UNITS, 1)
+          const list = parts.length ? parts : ['']
+          for (let j = 0; j < list.length; j++) {
+            rows.push({ text: list[j] })
+          }
+        }
+      }
+      if (!rows.length) {
+        rows.push({ text: '这首歌的歌词读不出来，让手机重新推一次试试' })
+      }
+      this.dTitle = this.shorten((item.title || '未命名') + (item.artist ? ' · ' + item.artist : ''), 12)
+      this.dArtist = item.artist || ''
+      this.dRows = rows
+      this.dPage = 0
+      this.dPageCount = Math.max(1, Math.ceil(rows.length / READ_SIZE))
+      this.dView = rows.slice(0, READ_SIZE)
+      this.detail = true
+    } catch (e) {
+      debug.error('page:book', 'openDetail', e)
+    }
+    this.loading = false
+    this.busy = false
+  },
+  closeDetail() {
+    this.detail = false
+  },
+  dPrev() {
+    if (this.dPage <= 0) {
+      return
+    }
+    this.dPage--
+    this.sliceDetail()
+  },
+  dNext() {
+    if (this.dPage >= this.dPageCount - 1) {
+      return
+    }
+    this.dPage++
+    this.sliceDetail()
+  },
+  sliceDetail() {
+    const start = this.dPage * READ_SIZE
+    this.dView = this.dRows.slice(start, start + READ_SIZE)
+  },
+  async loadDemo() {
+    await library.seed(demo.demos)
+    await this.load()
+  },
+  goBack() {
+    if (this.detail) {
+      this.detail = false
+      return
+    }
+    router.back()
+  }
+}
+</script>
+
+<style>
+.page {
+  width: 100%;
+  height: 100%;
+  padding-top: 6dp;
+  padding-right: 10dp;
+  padding-bottom: 6dp;
+  padding-left: 10dp;
+  flex-direction: column;
+  background-color: #070b10;
+}
+.header {
+  width: 100%;
+  height: 20dp;
+  flex-grow: 0;
+  flex-shrink: 0;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.back {
+  width: 24dp;
+  height: 20dp;
+  align-items: center;
+  justify-content: center;
+}
+.back-icon {
+  width: 15dp;
+  height: 15dp;
+}
+.manage {
+  font-size: 11dp;
+  line-height: 20dp;
+  font-weight: bold;
+  color: #6ef3c5;
+  padding-left: 4dp;
+  padding-right: 4dp;
+}
+.header-title {
+  font-size: 12dp;
+  line-height: 20dp;
+  font-weight: bold;
+  color: #9aa9bc;
+}
+.body {
+  width: 100%;
+  flex: 1;
+  flex-direction: column;
+}
+.info {
+  width: 100%;
+  height: 16dp;
+  flex-grow: 0;
+  flex-shrink: 0;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.info-text {
+  font-size: 10dp;
+  line-height: 16dp;
+  font-weight: bold;
+  color: #4f6074;
+}
+.info-hint {
+  font-size: 10dp;
+  line-height: 16dp;
+  font-weight: bold;
+  color: #ff7a7a;
+}
+.info-page {
+  font-size: 10dp;
+  line-height: 16dp;
+  font-weight: bold;
+  color: #4f6074;
+}
+/* 关键：竖排列表必须声明列方向，否则所有行会挤在同一行里 */
+.list {
+  width: 100%;
+  flex-direction: column;
+  margin-top: 2dp;
+}
+.row {
+  width: 100%;
+  height: 36dp;
+  flex-direction: row;
+  align-items: center;
+  border-bottom-width: 1px;
+  border-bottom-color: #111a24;
+}
+.dot {
+  width: 5dp;
+  height: 5dp;
+  border-radius: 3dp;
+  background-color: #1f3b4c;
+  margin-right: 6dp;
+}
+.row-main {
+  flex: 1;
+  flex-direction: column;
+}
+.row-title {
+  lines: 1;
+  font-size: 13dp;
+  line-height: 17dp;
+  font-weight: bold;
+  color: #eef4fb;
+}
+.row-sub {
+  lines: 1;
+  font-size: 10dp;
+  line-height: 14dp;
+  font-weight: bold;
+  color: #63748a;
+}
+.row-action {
+  font-size: 11.5dp;
+  line-height: 20dp;
+  font-weight: bold;
+  color: #4f6074;
+  padding-left: 4dp;
+}
+.row-action-danger {
+  color: #ff7a7a;
+}
+.pager {
+  width: 100%;
+  height: 24dp;
+  flex-grow: 0;
+  flex-shrink: 0;
+  margin-top: 2dp;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.pager-btn {
+  width: 52dp;
+  height: 22dp;
+  border-radius: 11dp;
+  align-items: center;
+  justify-content: center;
+  background-color: #0e151e;
+}
+.pager-off {
+  background-color: #0a1017;
+}
+.pager-text {
+  font-size: 10.5dp;
+  line-height: 18dp;
+  font-weight: bold;
+  color: #b9c6d6;
+}
+.pager-info {
+  font-size: 10.5dp;
+  line-height: 18dp;
+  font-weight: bold;
+  color: #4f6074;
+}
+.lines {
+  width: 100%;
+  flex-grow: 1;
+  margin-top: 2dp;
+  flex-direction: column;
+}
+.line {
+  lines: 1;
+  width: 100%;
+  font-size: 13dp;
+  line-height: 20dp;
+  font-weight: bold;
+  color: #c4cfdd;
+}
+.loading-box {
+  width: 100%;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.loading-text {
+  width: 100%;
+  font-size: 12dp;
+  line-height: 20dp;
+  font-weight: bold;
+  color: #7b8b9f;
+  text-align: center;
+}
+.loading-track {
+  width: 56%;
+  height: 3dp;
+  margin-top: 8dp;
+  border-radius: 2dp;
+  background-color: #141e29;
+}
+.fill {
+  height: 3dp;
+  border-radius: 2dp;
+  background-color: #6ef3c5;
+}
+.fill-w0 { width: 0%; }
+.fill-w10 { width: 10%; }
+.fill-w20 { width: 20%; }
+.fill-w30 { width: 30%; }
+.fill-w40 { width: 40%; }
+.fill-w50 { width: 50%; }
+.fill-w60 { width: 60%; }
+.fill-w70 { width: 70%; }
+.fill-w80 { width: 80%; }
+.fill-w90 { width: 90%; }
+.fill-w100 { width: 100%; }
+.empty {
+  flex: 1;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.empty-icon {
+  font-size: 31dp;
+  font-weight: bold;
+  color: #1c3040;
+}
+.empty-title {
+  margin-top: 2dp;
+  font-size: 14.5dp;
+  line-height: 20dp;
+  font-weight: bold;
+  color: #c4cfdd;
+}
+.empty-desc {
+  margin-top: 3dp;
+  font-size: 11dp;
+  line-height: 16dp;
+  font-weight: bold;
+  color: #5d6e83;
+  text-align: center;
+  padding-left: 10dp;
+  padding-right: 10dp;
+}
+.chip {
+  height: 22dp;
+  padding-left: 12dp;
+  padding-right: 12dp;
+  margin-top: 7dp;
+  border-radius: 11dp;
+  background-color: #0e151e;
+  align-items: center;
+  justify-content: center;
+  border-width: 1px;
+  border-color: #1c2836;
+}
+.chip-text {
+  font-size: 11.5dp;
+  line-height: 18dp;
+  font-weight: bold;
+  color: #b9c6d6;
+}
+</style>

@@ -1,0 +1,463 @@
+<template>
+  <div class="page">
+    <div class="header">
+      <text class="back" @click="goBack">返回</text>
+      <text class="header-title">设置</text>
+      <text class="version">v{{version}}</text>
+    </div>
+
+    <div class="tabs">
+      <div class="tab {{tab === 0 ? 'tab-on' : ''}}" @click="switchTab(0)">
+        <text class="tab-text {{tab === 0 ? 'tab-text-on' : ''}}" @click="switchTab(0)">连接</text>
+      </div>
+      <div class="tab {{tab === 1 ? 'tab-on' : ''}}" @click="switchTab(1)">
+        <text class="tab-text {{tab === 1 ? 'tab-text-on' : ''}}" @click="switchTab(1)">播放</text>
+      </div>
+      <div class="tab {{tab === 2 ? 'tab-on' : ''}}" @click="switchTab(2)">
+        <text class="tab-text {{tab === 2 ? 'tab-text-on' : ''}}" @click="switchTab(2)">显示</text>
+      </div>
+    </div>
+
+    <!-- 连接 -->
+    <div class="body" if="{{tab === 0}}">
+      <div class="card">
+        <div class="status-row">
+          <div class="dot dot-{{dotClass}}"></div>
+          <text class="status-text">{{statusText}}</text>
+        </div>
+        <div class="btn" @click="diagnose">
+          <text class="btn-text" @click="diagnose">诊断连接</text>
+        </div>
+        <div class="btn" @click="resync">
+          <text class="btn-text" @click="resync">重新同步</text>
+        </div>
+      </div>
+      <text class="note" if="{{noteText}}">{{noteText}}</text>
+      <text class="tip">手机端保持运行，手环才能持续收到歌词与状态</text>
+    </div>
+
+    <!-- 播放 -->
+    <div class="body" if="{{tab === 1}}">
+      <div class="opt" @click="toggleMock">
+        <text class="opt-text" @click="toggleMock">演示模式 · {{mock ? '开' : '关'}}</text>
+      </div>
+      <div class="opt" @click="toggleFollow">
+        <text class="opt-text" @click="toggleFollow">自动跟随歌词 · {{follow ? '开' : '关'}}</text>
+      </div>
+      <div class="opt" @click="toggleAutoSave">
+        <text class="opt-text" @click="toggleAutoSave">自动保存歌词 · {{autoSave ? '开' : '关'}}</text>
+      </div>
+      <div class="opt" @click="toggleVibrate">
+        <text class="opt-text" @click="toggleVibrate">操作振动 · {{vibrate ? '开' : '关'}}</text>
+      </div>
+      <text class="opt-label">歌词偏移</text>
+      <div class="offset-bar">
+        <div class="obtn" @click="offsetBack"><text class="osym" @click="offsetBack">-</text></div>
+        <div class="oval" @click="offsetReset"><text class="oval-text" @click="offsetReset">{{offsetText}}</text></div>
+        <div class="obtn" @click="offsetForward"><text class="osym" @click="offsetForward">+</text></div>
+      </div>
+    </div>
+
+    <!-- 显示 -->
+    <div class="body" if="{{tab === 2}}">
+      <div class="opt" @click="cycleFont">
+        <text class="opt-text" @click="cycleFont">歌词字号 · {{fontLabel}}</text>
+      </div>
+      <div class="opt" @click="cycleStep">
+        <text class="opt-text" @click="cycleStep">滑动步长 · {{swipeStep}} 句</text>
+      </div>
+      <text class="tip">字号三档：小 / 中 / 大，播放页和全屏歌词同步生效</text>
+      <text class="tip">滑动步长：一次上下滑翻几句，默认 1 句</text>
+    </div>
+  </div>
+</template>
+
+<script>
+import router from '@system.router'
+import vibrator from '@system.vibrator'
+import player from '../../common/scripts/player-state.js'
+import transport from '../../common/scripts/transport.js'
+import debug from '../../common/scripts/debug.js'
+
+const FONT_LABELS = ['小', '中', '大']
+const FONT_ORDER = [0, 1, 2]
+
+export default {
+  data: {
+    tab: 0,
+    connected: false,
+    mock: true,
+    follow: true,
+    autoSave: true,
+    vibrate: true,
+    fontSize: 1,
+    swipeStep: 1,
+    fontLabel: '中',
+    offsetText: '0.0s',
+    statusText: '演示模式',
+    dotClass: 'demo',
+    noteText: '',
+    diagnosisText: '',
+    version: '1.0.1'
+  },
+  onInit() {
+    debug.mark('page:settings', 'onInit')
+    try {
+      this.unsubscribe = player.subscribe(function (reason, view) {
+        this.apply(view)
+      }.bind(this))
+      player.init().then(function () {
+        this.apply(player.snapshot())
+      }.bind(this)).catch(function (err) {
+        debug.error('page:settings', 'player.init', err)
+      })
+    } catch (e) {
+      debug.error('page:settings', 'onInit', e)
+    }
+  },
+  onShow() {
+    this.apply(player.snapshot())
+  },
+  onDestroy() {
+    if (this.unsubscribe) {
+      this.unsubscribe()
+      this.unsubscribe = null
+    }
+  },
+  apply(view) {
+    if (!view) {
+      return
+    }
+    this.connected = view.connected
+    this.mock = view.mock
+    this.follow = view.follow
+    this.autoSave = view.autoSave
+    this.vibrate = view.vibrate !== false
+    this.fontSize = typeof view.fontSize === 'number' ? view.fontSize : 1
+    this.swipeStep = Math.max(1, Math.min(3, Number(view.swipeStep) || 1))
+    this.fontLabel = FONT_LABELS[this.fontSize] || '中'
+    this.offsetText = view.offsetText
+    if (view.connected) {
+      this.statusText = '已连接手机'
+      this.dotClass = 'ok'
+    } else if (view.mock) {
+      this.statusText = '演示模式'
+      this.dotClass = 'demo'
+    } else {
+      this.statusText = '等待连接'
+      this.dotClass = 'off'
+    }
+    this.noteText = view.lastError || ''
+    if (this.diagnosisText && !view.lastError) {
+      this.noteText = this.diagnosisText
+    }
+  },
+  switchTab(index) {
+    this.tab = index
+  },
+  buzz() {
+    if (!this.vibrate) {
+      return
+    }
+    try {
+      vibrator.vibrate({ mode: 'short' })
+    } catch (e) {}
+  },
+  diagnose() {
+    this.buzz()
+    this.noteText = '正在诊断…'
+    transport.diagnose().then(function (res) {
+      this.diagnosisText = (res && res.message) || '没有响应'
+      this.noteText = this.diagnosisText
+    }.bind(this)).catch(function () {
+      this.noteText = '诊断失败'
+    }.bind(this))
+  },
+  resync() {
+    this.buzz()
+    this.diagnosisText = '已请求重新同步'
+    this.noteText = this.diagnosisText
+    player.requestSync().catch(function () {})
+    player.requestLyrics().catch(function () {})
+  },
+  toggleMock() {
+    this.buzz()
+    player.setMock(!this.mock).catch(function () {})
+  },
+  toggleFollow() {
+    this.buzz()
+    player.setFollow(!this.follow)
+  },
+  toggleAutoSave() {
+    this.buzz()
+    player.setAutoSave(!this.autoSave)
+  },
+  toggleVibrate() {
+    // 关振动时也要给一次反馈，否则像没响应
+    if (this.vibrate) {
+      this.buzz()
+    }
+    player.setVibrate(!this.vibrate)
+  },
+  cycleFont() {
+    this.buzz()
+    const index = FONT_ORDER.indexOf(this.fontSize)
+    const next = FONT_ORDER[(index + 1) % FONT_ORDER.length]
+    player.setFontSize(next)
+  },
+  cycleStep() {
+    this.buzz()
+    const next = this.swipeStep >= 3 ? 1 : this.swipeStep + 1
+    player.setSwipeStep(next)
+  },
+  offsetBack() {
+    this.buzz()
+    player.adjustOffset(-500)
+  },
+  offsetForward() {
+    this.buzz()
+    player.adjustOffset(500)
+  },
+  offsetReset() {
+    this.buzz()
+    player.resetOffset()
+  },
+  goBack() {
+    router.back()
+  }
+}
+</script>
+
+<style>
+.page {
+  width: 100%;
+  height: 100%;
+  padding-top: 4dp;
+  padding-right: 10dp;
+  padding-bottom: 4dp;
+  padding-left: 10dp;
+  flex-direction: column;
+  background-color: #070b10;
+}
+.header {
+  width: 100%;
+  height: 22dp;
+  flex-grow: 0;
+  flex-shrink: 0;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.back {
+  font-size: 11dp;
+  line-height: 22dp;
+  font-weight: bold;
+  color: #6ef3c5;
+  padding-left: 2dp;
+  padding-right: 2dp;
+}
+.header-title {
+  font-size: 12dp;
+  line-height: 22dp;
+  font-weight: bold;
+  color: #9aa9bc;
+}
+.version {
+  font-size: 10dp;
+  line-height: 22dp;
+  font-weight: bold;
+  color: #4f6074;
+}
+.tabs {
+  width: 100%;
+  height: 28dp;
+  flex-grow: 0;
+  flex-shrink: 0;
+  margin-top: 4dp;
+  flex-direction: row;
+}
+.tab {
+  height: 28dp;
+  flex: 1;
+  margin-right: 5dp;
+  border-radius: 9dp;
+  background-color: #0e151e;
+  border-width: 1px;
+  border-color: #1c2836;
+  align-items: center;
+  justify-content: center;
+}
+.tab-on {
+  background-color: #123b31;
+  border-color: #6ef3c5;
+}
+.tab-text {
+  font-size: 11dp;
+  line-height: 24dp;
+  font-weight: bold;
+  color: #7b8b9f;
+  text-align: center;
+}
+.tab-text-on {
+  color: #6ef3c5;
+}
+.body {
+  width: 100%;
+  flex: 1;
+  flex-direction: column;
+  margin-top: 5dp;
+}
+.card {
+  width: 100%;
+  height: 96dp;
+  flex-grow: 0;
+  flex-shrink: 0;
+  padding-top: 6dp;
+  padding-left: 8dp;
+  padding-right: 8dp;
+  border-radius: 10dp;
+  background-color: #0b121a;
+  border-width: 1px;
+  border-color: #151f2b;
+  flex-direction: column;
+}
+.status-row {
+  width: 100%;
+  height: 24dp;
+  flex-grow: 0;
+  flex-shrink: 0;
+  flex-direction: row;
+  align-items: center;
+}
+.dot {
+  width: 6dp;
+  height: 6dp;
+  border-radius: 3dp;
+  margin-right: 5dp;
+  background-color: #63748a;
+}
+.dot-ok {
+  background-color: #6ef3c5;
+}
+.dot-demo {
+  background-color: #ffc46b;
+}
+.dot-off {
+  background-color: #ff7a7a;
+}
+.status-text {
+  font-size: 11.5dp;
+  line-height: 24dp;
+  font-weight: bold;
+  color: #9aa9bc;
+}
+.btn {
+  width: 100%;
+  height: 28dp;
+  flex-grow: 0;
+  flex-shrink: 0;
+  margin-top: 4dp;
+  border-radius: 9dp;
+  background-color: #0e151e;
+  border-width: 1px;
+  border-color: #1c2836;
+  align-items: center;
+  justify-content: center;
+}
+.btn-text {
+  font-size: 11.5dp;
+  line-height: 24dp;
+  font-weight: bold;
+  color: #b9c6d6;
+}
+.opt {
+  width: 100%;
+  height: 30dp;
+  flex-grow: 0;
+  flex-shrink: 0;
+  margin-bottom: 5dp;
+  border-radius: 10dp;
+  background-color: #0e151e;
+  border-width: 1px;
+  border-color: #1c2836;
+  align-items: center;
+  justify-content: center;
+}
+.opt-text {
+  font-size: 12dp;
+  line-height: 26dp;
+  font-weight: bold;
+  color: #dfe8f2;
+}
+.opt-label {
+  width: 100%;
+  flex-grow: 0;
+  flex-shrink: 0;
+  margin-top: 2dp;
+  font-size: 10dp;
+  line-height: 16dp;
+  font-weight: bold;
+  color: #7b8b9f;
+}
+.offset-bar {
+  width: 100%;
+  height: 28dp;
+  flex-grow: 0;
+  flex-shrink: 0;
+  margin-top: 4dp;
+  flex-direction: row;
+  align-items: center;
+  border-radius: 9dp;
+  background-color: #0e151e;
+  border-width: 1px;
+  border-color: #1c2836;
+}
+.obtn {
+  width: 56dp;
+  height: 28dp;
+  align-items: center;
+  justify-content: center;
+}
+.osym {
+  font-size: 15dp;
+  line-height: 26dp;
+  font-weight: bold;
+  color: #9aa9bc;
+}
+.oval {
+  flex: 1;
+  height: 28dp;
+  align-items: center;
+  justify-content: center;
+  border-left-width: 1px;
+  border-left-color: #1c2836;
+  border-right-width: 1px;
+  border-right-color: #1c2836;
+}
+.oval-text {
+  font-size: 11dp;
+  line-height: 26dp;
+  font-weight: bold;
+  color: #dfe8f2;
+  text-align: center;
+}
+.note {
+  width: 100%;
+  flex-grow: 0;
+  flex-shrink: 0;
+  margin-top: 4dp;
+  font-size: 9.5dp;
+  line-height: 14dp;
+  font-weight: bold;
+  color: #63748a;
+}
+.tip {
+  width: 100%;
+  flex-grow: 0;
+  flex-shrink: 0;
+  margin-top: 4dp;
+  font-size: 9.5dp;
+  line-height: 14dp;
+  color: #4f6074;
+}
+</style>

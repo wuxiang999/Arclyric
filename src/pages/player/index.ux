@@ -1,0 +1,731 @@
+<template>
+  <div class="page">
+    <div class="topbar">
+      <div class="status">
+        <div class="dot dot-{{connected ? 'ok' : (mock ? 'demo' : 'off')}}"></div>
+        <text class="status-text">{{statusText}}</text>
+      </div>
+      <div class="tools">
+        <div class="tool" @click="onFetchLyrics">
+          <image class="tool-icon" src="/common/images/ic_add_lyric.png"></image>
+        </div>
+        <div class="tool" @click="openBook">
+          <image class="tool-icon" src="/common/images/ic_book.png"></image>
+        </div>
+        <div class="tool" @click="openSettings">
+          <image class="tool-icon" src="/common/images/ic_gear.png"></image>
+        </div>
+      </div>
+    </div>
+
+    <div class="meta" @click="openLyrics">
+      <text class="title">{{title}}</text>
+      <text class="artist">{{artist}}</text>
+    </div>
+
+    <div class="lyric" @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @swipe="onSwipe" @click="onLyricTap">
+      <block if="{{loading}}">
+        <text class="loading-text">{{loadingText}}{{dots}}</text>
+        <div class="loading-track">
+          <div class="fill fill-w{{transferActive ? transferLevel : loadWidth}}"></div>
+        </div>
+        <text class="loading-sub" if="{{transferActive}}">已收到 {{transferReceived}}/{{transferTotal}} 包</text>
+      </block>
+      <block if="{{!loading}}">
+        <text class="lyric-row {{$item.cls}}" for="{{rows}}" @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @swipe="onSwipe" @click="onLyricTap">{{$item.text}}</text>
+        <text class="lyric-hint" if="{{browsing}}" @click="onLyricTap">轻触回到当前句</text>
+      </block>
+    </div>
+
+    <div class="progress">
+      <div class="track">
+        <div class="fill fill-w{{barLevel}}"></div>
+      </div>
+    </div>
+    <div class="times">
+      <text class="time">{{positionText}}</text>
+      <text class="time">{{durationText}}</text>
+    </div>
+
+    <div class="controls">
+      <div class="ctrl ctrl-side" @click="onPrev">
+        <image class="ctrl-icon" src="/common/images/ic_prev.png"></image>
+      </div>
+      <div class="ctrl ctrl-main" @click="onToggle">
+        <image class="ctrl-icon-main" if="{{playing}}" src="/common/images/ic_pause.png"></image>
+        <image class="ctrl-icon-main" if="{{!playing}}" src="/common/images/ic_play.png"></image>
+      </div>
+      <div class="ctrl ctrl-side" @click="onNext">
+        <image class="ctrl-icon" src="/common/images/ic_next.png"></image>
+      </div>
+    </div>
+
+    <div class="seek-row">
+      <div class="seek" @click="back10">
+        <image class="seek-icon" src="/common/images/ic_rewind.png"></image>
+      </div>
+      <div class="seek" @click="forward10">
+        <image class="seek-icon" src="/common/images/ic_forward.png"></image>
+      </div>
+    </div>
+
+  </div>
+</template>
+
+<script>
+import router from '@system.router'
+import vibrator from '@system.vibrator'
+import prompt from '@system.prompt'
+import player from '../../common/scripts/player-state.js'
+import lrc from '../../common/scripts/lrc.js'
+import debug from '../../common/scripts/debug.js'
+
+// 每行能放多少「显示单位」：中日韩字算 1，西文算 0.55。
+// 单位数不能拍脑袋写死，必须按「可用宽度 / 字号」算出来再留 4% 余量，
+// 否则估算偏大 1 个字就会二次折行，把整块歌词顶出容器，看起来就是被吞了一截。
+const ON_SIZE = [14.5, 16.5, 18]
+const OFF_SIZE = [11, 12.5, 14]
+// 屏幕 192 逻辑宽 - 左右各 11 内边距 = 170，再让 2dp 给渲染误差
+const LYRIC_WIDTH = 168
+const SIZE_KEY = ['s', 'm', 'l']
+
+function unitsFor(size) {
+  return Math.max(6, Math.floor((LYRIC_WIDTH / size) * 0.96))
+}
+const BROWSE_IDLE_MS = 6000
+
+export default {
+  data: {
+    title: '未在播放',
+    artist: '连接手机后自动同步',
+    percent: 0,
+    positionText: '0:00',
+    durationText: '0:00',
+    playing: false,
+    connected: false,
+    mock: true,
+    barLevel: 0,
+    statusText: '演示模式',
+    rows: [{ text: '等待歌词', cls: 'on-m' }],
+    browsing: false,
+    fontSize: 1,
+    swipeStep: 1,
+    vibrateOn: true,
+    loading: true,
+    loadingText: '正在准备',
+    dots: '',
+    loadWidth: 30,
+    dotStep: 0,
+    loadStep: 0,
+    transferActive: false,
+    transferReceived: 0,
+    transferTotal: 0,
+    transferLevel: 0
+  },
+  onInit() {
+    debug.mark('page:player', 'onInit')
+    this.lines = []
+    this.focus = -1
+    this.touchX = 0
+    this.touchY = 0
+    this.touchAt = 0
+    this.touchMoved = false
+    this.swiped = false
+    this.swipedAt = 0
+    this.lastBrowseAt = 0
+    this.browseTimer = null
+    // Vela 没有 CSS 动画，加载动效只能靠定时器换帧
+    this.loadTimer = setInterval(() => {
+      const step = (this.dotStep + 1) % 4
+      this.dotStep = step
+      this.dots = step === 0 ? '' : step === 1 ? '·' : step === 2 ? '··' : '···'
+      const seq = [20, 40, 60, 80, 60, 40]
+      this.loadStep = (this.loadStep + 1) % seq.length
+      this.loadWidth = seq[this.loadStep]
+    }, 320)
+    try {
+      this.unsubscribe = player.subscribe((reason, view) => {
+        this.apply(view)
+      })
+      player.init().then(() => {
+        this.apply(player.snapshot())
+        debug.mark('page:player', '数据已应用')
+      }).catch((err) => {
+        debug.error('page:player', 'player.init', err)
+      })
+    } catch (e) {
+      debug.error('page:player', 'onInit', e)
+    }
+  },
+  onShow() {
+    debug.mark('page:player', 'onShow')
+    try {
+      this.apply(player.snapshot())
+    } catch (e) {
+      debug.error('page:player', 'onShow', e)
+    }
+  },
+  onDestroy() {
+    if (this.unsubscribe) {
+      this.unsubscribe()
+      this.unsubscribe = null
+    }
+    if (this.browseTimer) {
+      clearTimeout(this.browseTimer)
+      this.browseTimer = null
+    }
+    if (this.loadTimer) {
+      clearInterval(this.loadTimer)
+      this.loadTimer = null
+    }
+  },
+  shorten(text, max) {
+    if (!text) {
+      return ''
+    }
+    const value = String(text).trim()
+    return value.length > max ? value.slice(0, max - 1) + '…' : value
+  },
+  apply(view) {
+    this.title = this.shorten(view.title || '未在播放', 10)
+    this.artist = this.shorten(view.artist || (view.mock ? '演示曲目' : '未知歌手'), 13)
+    this.percent = view.percent
+    this.barLevel = Math.round((Number(view.percent) || 0) / 10) * 10
+    this.positionText = view.positionText
+    this.durationText = view.durationText
+    this.playing = view.playing
+    this.connected = view.connected
+    this.mock = view.mock
+
+    const lines = view.lines || []
+    const receiving = !!view.transferActive && !view.mock
+    this.transferActive = receiving
+    this.transferReceived = Number(view.transferReceived) || 0
+    this.transferTotal = Number(view.transferTotal) || 0
+    const pct = Number(view.transferPercent) || 0
+    // 进度条只有 10 / 20 … 100 这几档宽度，向下取整避免看起来比实际多
+    this.transferLevel = Math.max(0, Math.min(100, Math.floor(pct / 10) * 10))
+    // 有词就正常显示；没词时给出「在等什么」的提示和进度条
+    if (lines.length) {
+      this.loading = false
+    } else if (view.mock) {
+      this.loading = false
+    } else {
+      this.loading = true
+      // 手机正在发歌词就报真实分包进度，否则报等待状态
+      this.loadingText = receiving ? '正在接收歌词' : (view.connected ? '等待手机歌词' : '等待连接手机')
+    }
+    const songChanged = this.song !== (view.title + '|' + view.artist)
+    this.song = view.title + '|' + view.artist
+    this.lines = lines
+    if (songChanged) {
+      this.browsing = false
+      this.focus = view.lyricIndex
+    }
+    // 没有在手动翻歌词时，焦点永远跟着播放进度走
+    if (!this.browsing) {
+      this.focus = view.lyricIndex
+    }
+    this.buildRows()
+
+    this.fontSize = typeof view.fontSize === 'number' ? view.fontSize : 1
+    this.swipeStep = Math.max(1, Math.min(3, Number(view.swipeStep) || 1))
+    this.vibrateOn = view.vibrate !== false
+
+    if (view.connected) {
+      this.statusText = '已连接手机'
+    } else if (view.mock) {
+      this.statusText = '演示模式'
+    } else {
+      this.statusText = '等待连接'
+    }
+  },
+  // 焦点句 + 前后各一句，逐行手工折行；行高固定，两行的句子不会被裁
+  buildRows() {
+    const lines = this.lines || []
+    const rows = []
+    const size = Math.max(0, Math.min(2, this.fontSize || 0))
+    const key = SIZE_KEY[size]
+    const curUnits = unitsFor(ON_SIZE[size])
+    const sideUnits = unitsFor(OFF_SIZE[size])
+    if (!lines.length) {
+      this.rows = [{ text: '暂无歌词', cls: 'on-' + key }]
+      return
+    }
+    const index = Math.max(0, Math.min(lines.length - 1, this.focus))
+    if (index > 0) {
+      const prev = lrc.wrap(lines[index - 1].text, sideUnits, 1)[0]
+      if (prev) {
+        rows.push({ text: prev, cls: 'off-' + key })
+      }
+    }
+    const current = lrc.wrap(lines[index].text, curUnits, 2)
+    const curRows = current.length ? current : ['']
+    for (let i = 0; i < curRows.length; i++) {
+      rows.push({ text: curRows[i], cls: 'on-' + key })
+    }
+    if (index < lines.length - 1) {
+      const next = lrc.wrap(lines[index + 1].text, sideUnits, 1)[0]
+      if (next) {
+        rows.push({ text: next, cls: 'off-' + key })
+      }
+    }
+    this.rows = rows
+  },
+  onTouchStart(evt) {
+    const point = this.pointOf(evt, 'start')
+    this.touchX = point ? Number(point.clientX) || 0 : 0
+    this.touchY = point ? Number(point.clientY) || 0 : 0
+    this.touchAt = Date.now()
+    this.touchMoved = false
+    // 上一次滑动遗留的「吞点击」标志要在新的按下时清掉
+    this.swiped = false
+  },
+  onTouchMove(evt) {
+    const point = this.pointOf(evt, 'move')
+    if (!point) {
+      return
+    }
+    // 真机上手指离开时可能收不到 move，这里只做提前判定
+    if (Math.abs((Number(point.clientY) || 0) - this.touchY) > 10) {
+      this.touchMoved = true
+    }
+  },
+  onTouchEnd(evt) {
+    const point = this.pointOf(evt, 'end')
+    if (!point) {
+      return
+    }
+    const dy = (Number(point.clientY) || 0) - this.touchY
+    const dx = (Number(point.clientX) || 0) - this.touchX
+    const elapsed = Date.now() - (this.touchAt || 0)
+    // 位移太小、横向为主、按太久（长按）都当点击，交给 onLyricTap
+    if (Math.abs(dy) < 12 || Math.abs(dy) < Math.abs(dx) || elapsed > 1500) {
+      return
+    }
+    this.markSwiped()
+    // 一次滑动固定按设置走，默认 1 句；不再按距离叠加，避免一下跳两段
+    const steps = Math.max(1, Math.min(3, this.swipeStep || 1))
+    this.browse(dy < 0 ? steps : -steps)
+  },
+  // 系统手势事件：部分固件上 touchend 拿不到坐标，用 swipe 兜底
+  onSwipe(evt) {
+    const dir = evt && evt.direction
+    if (dir !== 'up' && dir !== 'down') {
+      return
+    }
+    this.markSwiped()
+    const steps = Math.max(1, Math.min(3, this.swipeStep || 1))
+    this.browse(dir === 'up' ? steps : -steps)
+  },
+  markSwiped() {
+    this.swiped = true
+    this.swipedAt = Date.now()
+    this.touchMoved = false
+  },
+  pointOf(evt, phase) {
+    if (!evt) {
+      return null
+    }
+    let list = null
+    if (phase === 'end') {
+      list = evt.changedTouches || evt.touches
+    } else if (phase === 'move') {
+      list = evt.touches || evt.changedTouches
+    } else {
+      list = evt.touches || evt.changedTouches
+    }
+    if (list && list.length) {
+      return list[0]
+    }
+    if (evt.clientY !== undefined) {
+      return evt
+    }
+    return null
+  },
+  // 上滑往后看、下滑往前看；停手 6 秒自动回到跟随播放
+  browse(delta) {
+    const lines = this.lines || []
+    if (!lines.length) {
+      return
+    }
+    // 同一次滑动可能同时触发 touchend 和 swipe，200ms 内只认一次
+    const now = Date.now()
+    if (now - this.lastBrowseAt < 200) {
+      return
+    }
+    this.lastBrowseAt = now
+    const base = this.focus < 0 ? 0 : this.focus
+    const target = Math.max(0, Math.min(lines.length - 1, base + delta))
+    if (target === base && !this.browsing) {
+      return
+    }
+    this.focus = target
+    this.browsing = true
+    this.buildRows()
+    this.vibrate()
+    if (this.browseTimer) {
+      clearTimeout(this.browseTimer)
+    }
+    this.browseTimer = setTimeout(() => {
+      this.browseTimer = null
+      this.browsing = false
+      this.focus = player.snapshot().lyricIndex
+      this.buildRows()
+    }, BROWSE_IDLE_MS)
+  },
+  onLyricTap() {
+    // 滑动结束系统还会补一个 click：吞掉它，否则每滑一次都会被带去歌词页
+    if (this.swiped) {
+      this.swiped = false
+      if (Date.now() - this.swipedAt < 500) {
+        return
+      }
+    }
+    // 浏览状态下点击 = 跳回当前播放句（顺手 seek 到手动停留的那句没意义）
+    if (this.browsing) {
+      this.browsing = false
+      if (this.browseTimer) {
+        clearTimeout(this.browseTimer)
+        this.browseTimer = null
+      }
+      this.focus = player.snapshot().lyricIndex
+      this.buildRows()
+      return
+    }
+    this.openLyrics()
+  },
+  vibrate() {
+    if (!this.vibrateOn) {
+      return
+    }
+    try {
+      vibrator.vibrate({ mode: 'short' })
+    } catch (e) {}
+  },
+  onToggle() {
+    this.vibrate()
+    player.toggle().catch(() => {})
+  },
+  onPrev() {
+    this.vibrate()
+    player.previous().catch(() => {})
+  },
+  onNext() {
+    this.vibrate()
+    player.next().catch(() => {})
+  },
+  back10() {
+    this.vibrate()
+    player.seekTo(player.getPosition() - 10000).catch(() => {})
+  },
+  forward10() {
+    this.vibrate()
+    player.seekTo(player.getPosition() + 10000).catch(() => {})
+  },
+  onFetchLyrics() {
+    this.vibrate()
+    player.requestLyrics().catch(() => {})
+    try {
+      prompt.showToast({ message: '已请求手机匹配歌词', duration: 1200 })
+    } catch (e) {}
+  },
+  openLyrics() {
+    router.push({ uri: '/pages/lyrics' })
+  },
+  openBook() {
+    router.push({ uri: '/pages/book' })
+  },
+  openSettings() {
+    router.push({ uri: '/pages/settings' })
+  }
+}
+</script>
+
+<style>
+.page {
+  width: 100%;
+  height: 100%;
+  padding-top: 6dp;
+  padding-right: 11dp;
+  padding-bottom: 4dp;
+  padding-left: 11dp;
+  flex-direction: column;
+  background-color: #070b10;
+}
+.topbar {
+  flex-grow: 0;
+  flex-shrink: 0;
+  width: 100%;
+  height: 18dp;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.status {
+  flex-direction: row;
+  align-items: center;
+}
+.dot {
+  width: 5dp;
+  height: 5dp;
+  border-radius: 3dp;
+  margin-right: 4dp;
+  background-color: #63748a;
+}
+.dot-ok {
+  background-color: #6ef3c5;
+}
+.dot-demo {
+  background-color: #ffc46b;
+}
+.dot-off {
+  background-color: #ff7a7a;
+}
+.status-text {
+  font-size: 11dp;
+  font-weight: bold;
+  color: #9aa9bc;
+}
+.tools {
+  flex-direction: row;
+  align-items: center;
+}
+.tool {
+  width: 22dp;
+  height: 18dp;
+  margin-left: 5dp;
+  align-items: center;
+  justify-content: center;
+}
+.tool-icon {
+  width: 15dp;
+  height: 15dp;
+}
+.meta {
+  flex-grow: 0;
+  flex-shrink: 0;
+  width: 100%;
+  margin-top: 4dp;
+  flex-direction: column;
+  align-items: center;
+}
+.title {
+  width: 100%;
+  font-size: 19dp;
+  line-height: 25dp;
+  font-weight: bold;
+  color: #eef4fb;
+  text-align: center;
+}
+.artist {
+  width: 100%;
+  font-size: 11.5dp;
+  line-height: 15dp;
+  font-weight: bold;
+  color: #8fa0b5;
+  text-align: center;
+}
+.lyric {
+  flex: 1;
+  width: 100%;
+  margin-top: 2dp;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.lyric-row {
+  lines: 1;
+  width: 100%;
+  padding-top: 1dp;
+  padding-bottom: 1dp;
+  font-weight: bold;
+  text-align: center;
+  color: #51627a;
+}
+.off-s {
+  font-size: 11dp;
+  line-height: 18dp;
+}
+.off-m {
+  font-size: 12.5dp;
+  line-height: 20dp;
+}
+.off-l {
+  font-size: 14dp;
+  line-height: 22dp;
+}
+.on-s {
+  font-size: 14.5dp;
+  line-height: 20dp;
+  color: #6ef3c5;
+}
+.on-m {
+  font-size: 16.5dp;
+  line-height: 22dp;
+  color: #6ef3c5;
+}
+.on-l {
+  font-size: 18dp;
+  line-height: 24dp;
+  color: #6ef3c5;
+}
+.loading-text {
+  width: 100%;
+  font-size: 12.5dp;
+  line-height: 20dp;
+  font-weight: bold;
+  color: #7b8b9f;
+  text-align: center;
+}
+.loading-sub {
+  width: 100%;
+  margin-top: 3dp;
+  font-size: 9.5dp;
+  line-height: 14dp;
+  font-weight: bold;
+  color: #4f6074;
+  text-align: center;
+}
+.loading-track {
+  width: 58%;
+  height: 3dp;
+  margin-top: 7dp;
+  border-radius: 2dp;
+  background-color: #141e29;
+}
+.lyric-hint {
+  width: 100%;
+  margin-top: 2dp;
+  font-size: 10dp;
+  line-height: 14dp;
+  font-weight: bold;
+  color: #3d4b5d;
+  text-align: center;
+}
+.progress {
+  flex-grow: 0;
+  flex-shrink: 0;
+  width: 100%;
+  margin-top: 4dp;
+  height: 6dp;
+  justify-content: center;
+}
+.track {
+  width: 100%;
+  height: 3dp;
+  border-radius: 2dp;
+  background-color: #141e29;
+}
+.fill-w0 {
+  width: 0%;
+}
+.fill-w10 {
+  width: 10%;
+}
+.fill-w20 {
+  width: 20%;
+}
+.fill-w30 {
+  width: 30%;
+}
+.fill-w40 {
+  width: 40%;
+}
+.fill-w50 {
+  width: 50%;
+}
+.fill-w60 {
+  width: 60%;
+}
+.fill-w70 {
+  width: 70%;
+}
+.fill-w80 {
+  width: 80%;
+}
+.fill-w90 {
+  width: 90%;
+}
+.fill-w100 {
+  width: 100%;
+}
+.fill {
+  height: 3dp;
+  border-radius: 2dp;
+  background-color: #6ef3c5;
+}
+.times {
+  flex-grow: 0;
+  flex-shrink: 0;
+  width: 100%;
+  margin-top: 1dp;
+  flex-direction: row;
+  justify-content: space-between;
+}
+.time {
+  font-size: 10.5dp;
+  font-weight: bold;
+  color: #4f6074;
+}
+.controls {
+  flex-grow: 0;
+  flex-shrink: 0;
+  width: 100%;
+  margin-top: 4dp;
+  height: 42dp;
+  flex-direction: row;
+  align-items: center;
+}
+.ctrl {
+  height: 42dp;
+  border-radius: 21dp;
+  align-items: center;
+  justify-content: center;
+  background-color: #0e151e;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #1c2836;
+}
+.ctrl-side {
+  width: 25%;
+}
+.ctrl-main {
+  width: 46%;
+  margin-left: 2%;
+  margin-right: 2%;
+  background-color: #6ef3c5;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #6ef3c5;
+}
+.ctrl-icon {
+  width: 21dp;
+  height: 21dp;
+}
+.ctrl-icon-main {
+  width: 26dp;
+  height: 26dp;
+}
+.seek-row {
+  flex-grow: 0;
+  flex-shrink: 0;
+  width: 100%;
+  margin-top: 4dp;
+  height: 28dp;
+  flex-direction: row;
+  justify-content: space-between;
+}
+.seek {
+  width: 48%;
+  height: 28dp;
+  border-radius: 14dp;
+  align-items: center;
+  justify-content: center;
+  background-color: #0b121a;
+}
+.seek-icon {
+  width: 16dp;
+  height: 16dp;
+}
+</style>

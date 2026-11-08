@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">弧光歌词</string>
+    <string name="tagline">把歌词戴在腕上</string>
+    <string name="open_access">去开启通知使用权</string>
+    <string name="start_sync">启动同步</string>
+    <string name="stop_sync">停止同步</string>
+    <string name="import_lrc">导入 LRC 歌词</string>
+    <string name="resend_lyrics">重发当前歌词</string>
+    <string name="clear_log">清空日志</string>
+    <string name="copy_log">复制日志</string>
+    <string name="share_log">分享日志</string>
+    <string name="log_title">运行日志</string>
+    <string name="help_note">手机端需安装并登录小米运动健康，且已连接手环。手环端需安装同包名、同签名的 RPK（com.vela.lyricplayer）。播放音乐时保持本应用后台运行。</string>
+</resources>

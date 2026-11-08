@@ -1,0 +1,646 @@
+<template>
+  <div class="page">
+    <div class="header">
+      <div class="back" @click="goBack">
+        <image class="back-icon" src="/common/images/ic_back.png"></image>
+      </div>
+      <text class="header-title">歌词</text>
+      <div class="spacer"></div>
+    </div>
+
+    <div class="song">
+      <text class="song-title">{{title}}</text>
+      <text class="song-artist">{{artist}}</text>
+    </div>
+
+    <div class="stage" if="{{hasLyrics}}" @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @swipe="onSwipe">
+      <block for="{{rows}}">
+        <div class="line-row {{$item.active ? 'row-active' : ''}}" @click="onLine($item)" @touchstart="onTouchStart" @touchend="onTouchEnd">
+          <div class="marker {{$item.active && $item.first ? 'marker-on' : ''}}"></div>
+          <text class="line {{$item.cls}}" @click="onLine($item)" @touchstart="onTouchStart" @touchend="onTouchEnd">{{$item.text}}</text>
+        </div>
+      </block>
+    </div>
+
+    <div class="loading" if="{{loading}}">
+      <text class="loading-text">{{loadingText}}{{dots}}</text>
+      <div class="loading-track">
+        <div class="fill fill-w{{transferActive ? transferLevel : loadWidth}}"></div>
+      </div>
+      <text class="loading-sub" if="{{transferActive}}">已收到 {{transferReceived}}/{{transferTotal}} 包</text>
+    </div>
+
+    <div class="empty" if="{{!hasLyrics && !loading}}">
+      <text class="empty-icon">♪</text>
+      <text class="empty-title">暂无歌词</text>
+      <text class="empty-desc">{{connected ? '手机上放歌后自动同步' : '演示模式 · 连接手机后自动同步'}}</text>
+      <div class="empty-actions">
+        <div class="chip" @click="fetchLyrics"><text class="chip-text">获取歌词</text></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <text class="offset-label">偏移</text>
+      <div class="offset">
+        <div class="offset-btn" @click="offsetBack"><text class="offset-symbol">-</text></div>
+        <div class="offset-val" @click="offsetReset"><text class="offset-value">{{offsetText}}</text></div>
+        <div class="offset-btn" @click="offsetForward"><text class="offset-symbol">+</text></div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import router from '@system.router'
+import vibrator from '@system.vibrator'
+import player from '../../common/scripts/player-state.js'
+import lrc from '../../common/scripts/lrc.js'
+import debug from '../../common/scripts/debug.js'
+
+// 一行能放多少显示单位（中日韩 1，西文 0.55），留了余量防止二次折行
+const ACTIVE_SIZE = [14.5, 16.5, 18.5]
+const IDLE_SIZE = [11, 12.5, 14]
+// 172 的逻辑宽减去左侧标记的 2+4，再留 4% 渲染余量
+const LYRIC_WIDTH = 164
+const SIZE_KEY = ['s', 'm', 'l']
+
+function unitsFor(size) {
+  return Math.max(6, Math.floor((LYRIC_WIDTH / size) * 0.96))
+}
+const MAX_ROWS = 6
+
+export default {
+  data: {
+    title: '',
+    artist: '',
+    rows: [],
+    hasLyrics: false,
+    connected: false,
+    mock: true,
+    offsetText: '0.0s',
+    browsing: false,
+    fontSize: 1,
+    vibrateOn: true,
+    loading: true,
+    loadingText: '正在准备',
+    dots: '',
+    loadWidth: 30,
+    dotStep: 0,
+    loadStep: 0,
+    transferActive: false,
+    transferReceived: 0,
+    transferTotal: 0,
+    transferLevel: 0
+  },
+  onInit() {
+    debug.mark('page:lyrics', 'onInit')
+    // Vela 没有 CSS 动画，用定时器换帧做加载动效
+    this.loadTimer = setInterval(() => {
+      const step = (this.dotStep + 1) % 4
+      this.dotStep = step
+      this.dots = step === 0 ? '' : step === 1 ? '·' : step === 2 ? '··' : '···'
+      const seq = [20, 40, 60, 80, 60, 40]
+      this.loadStep = (this.loadStep + 1) % seq.length
+      this.loadWidth = seq[this.loadStep]
+    }, 320)
+    this.lines = []
+    this.focus = -1
+    this.browseTimer = null
+    this.touchX = 0
+    this.touchY = 0
+    this.swiped = false
+    this.swipedAt = 0
+    this.lastBrowseAt = 0
+    try {
+      this.unsubscribe = player.subscribe((reason, view) => {
+        this.apply(view)
+      })
+      player.init().then(() => {
+        this.apply(player.snapshot())
+      }).catch((err) => {
+        debug.error('page:lyrics', 'player.init', err)
+      })
+    } catch (e) {
+      debug.error('page:lyrics', 'onInit', e)
+    }
+  },
+  onShow() {
+    debug.mark('page:lyrics', 'onShow')
+    try {
+      this.apply(player.snapshot())
+    } catch (e) {
+      debug.error('page:lyrics', 'onShow', e)
+    }
+  },
+  onDestroy() {
+    if (this.loadTimer) {
+      clearInterval(this.loadTimer)
+      this.loadTimer = null
+    }
+    if (this.unsubscribe) {
+      this.unsubscribe()
+      this.unsubscribe = null
+    }
+    if (this.browseTimer) {
+      clearTimeout(this.browseTimer)
+      this.browseTimer = null
+    }
+  },
+  shorten(text, max) {
+    const value = String(text || '')
+    return value.length > max ? value.slice(0, max - 1) + '…' : value
+  },
+  apply(view) {
+    this.title = this.shorten(view.title || '未在播放', 11)
+    this.artist = this.shorten(view.artist || '', 15)
+    this.lines = view.lines || []
+    if (!this.browsing) {
+      this.focus = view.lyricIndex
+    }
+    this.refreshRows()
+    this.hasLyrics = view.hasLyrics
+    this.connected = view.connected
+    this.mock = view.mock
+    this.offsetText = view.offsetText
+    this.fontSize = typeof view.fontSize === 'number' ? view.fontSize : 1
+    this.vibrateOn = view.vibrate !== false
+    // 歌词没到齐时显示真实分包进度，收齐了自动消失
+    const receiving = !!view.transferActive && !view.mock
+    this.transferActive = receiving
+    this.transferReceived = Number(view.transferReceived) || 0
+    this.transferTotal = Number(view.transferTotal) || 0
+    const pct = Number(view.transferPercent) || 0
+    this.transferLevel = Math.max(0, Math.min(100, Math.floor(pct / 10) * 10))
+    if (this.lines.length || view.mock) {
+      this.loading = false
+    } else {
+      this.loading = true
+      this.loadingText = receiving ? '正在接收歌词' : (view.connected ? '等待手机歌词' : '等待连接手机')
+    }
+  },
+  // 以 focus 为中心取前后各两句；浏览时可以上下滑着看全曲
+  refreshRows() {
+    const lines = this.lines || []
+    if (!lines.length) {
+      this.rows = []
+      return
+    }
+    const center = this.focus < 0 ? 0 : this.focus
+    const window = lrc.sliceAround(lines, center, 2, 2)
+    this.rows = this.buildRows(window.items)
+  },
+  onTouchStart(evt) {
+    const point = this.pointOf(evt, 'start')
+    this.touchX = point ? Number(point.clientX) || 0 : 0
+    this.touchY = point ? Number(point.clientY) || 0 : 0
+    this.swiped = false
+  },
+  onTouchMove() {},
+  onTouchEnd(evt) {
+    const point = this.pointOf(evt, 'end')
+    if (!point) {
+      return
+    }
+    const dy = (Number(point.clientY) || 0) - this.touchY
+    const dx = (Number(point.clientX) || 0) - this.touchX
+    if (Math.abs(dy) < 12 || Math.abs(dy) < Math.abs(dx)) {
+      return
+    }
+    this.markSwiped()
+    const steps = Math.max(1, Math.min(6, Math.round(Math.abs(dy) / 26)))
+    this.browse(dy < 0 ? steps : -steps)
+  },
+  onSwipe(evt) {
+    const dir = evt && evt.direction
+    if (dir !== 'up' && dir !== 'down') {
+      return
+    }
+    this.markSwiped()
+    const distance = Number(evt.distance) || 40
+    const steps = Math.max(1, Math.min(6, Math.round(distance / 26)))
+    this.browse(dir === 'up' ? steps : -steps)
+  },
+  markSwiped() {
+    this.swiped = true
+    this.swipedAt = Date.now()
+  },
+  pointOf(evt, phase) {
+    if (!evt) {
+      return null
+    }
+    const list = phase === 'end'
+      ? (evt.changedTouches || evt.touches)
+      : (evt.touches || evt.changedTouches)
+    if (list && list.length) {
+      return list[0]
+    }
+    if (evt.clientY !== undefined) {
+      return evt
+    }
+    return null
+  },
+  // 上滑看后面、下滑看前面；停手 6 秒回到当前播放句
+  browse(delta) {
+    const lines = this.lines || []
+    if (!lines.length) {
+      return
+    }
+    const now = Date.now()
+    if (now - this.lastBrowseAt < 200) {
+      return
+    }
+    this.lastBrowseAt = now
+    const base = this.focus < 0 ? 0 : this.focus
+    const target = Math.max(0, Math.min(lines.length - 1, base + delta))
+    if (target === base && !this.browsing) {
+      return
+    }
+    this.focus = target
+    this.browsing = true
+    this.refreshRows()
+    this.vibrate()
+    if (this.browseTimer) {
+      clearTimeout(this.browseTimer)
+    }
+    this.browseTimer = setTimeout(() => {
+      this.browseTimer = null
+      this.browsing = false
+      this.focus = player.snapshot().lyricIndex
+      this.refreshRows()
+    }, 6000)
+  },
+  // 一句歌词折成 1-2 个显示行，全部拍平成一个数组，
+  // 每行高度固定，绝不会出现「第二行被裁掉一半」。
+  buildRows(items) {
+    const list = []
+    const size = Math.max(0, Math.min(2, this.fontSize || 0))
+    const key = SIZE_KEY[size]
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      const active = !!item.active
+      const units = unitsFor(active ? ACTIVE_SIZE[size] : IDLE_SIZE[size])
+      const parts = lrc.wrap(item.text, units, active ? 2 : 1)
+      const texts = parts.length ? parts : ['']
+      for (let j = 0; j < texts.length; j++) {
+        list.push({
+          text: texts[j],
+          active: active,
+          cls: (active ? 'la-' : 'li-') + key,
+          first: j === 0,
+          time: item.time,
+          index: item.index
+        })
+      }
+    }
+    // 只保留最多 MAX_ROWS 行：优先砍掉当前句之前的上下文
+    while (list.length > MAX_ROWS) {
+      let cut = -1
+      for (let i = 0; i < list.length; i++) {
+        if (!list[i].active) {
+          cut = i
+          break
+        }
+      }
+      if (cut < 0) {
+        break
+      }
+      list.splice(cut, 1)
+    }
+    while (list.length > MAX_ROWS) {
+      list.pop()
+    }
+    return list
+  },
+  vibrate() {
+    if (!this.vibrateOn) {
+      return
+    }
+    try {
+      vibrator.vibrate({ mode: 'short' })
+    } catch (e) {}
+  },
+  onLine(item) {
+    // 滑动结束时补发的 click 不要当成「跳转」
+    if (this.swiped) {
+      this.swiped = false
+      if (Date.now() - this.swipedAt < 500) {
+        return
+      }
+    }
+    if (!item || item.time === undefined) {
+      return
+    }
+    this.vibrate()
+    player.seekTo(item.time).catch(() => {})
+    // 点了某句就当作主动跳转：退出浏览态，下一次快照会让窗口回到播放位置
+    this.browsing = false
+    if (this.browseTimer) {
+      clearTimeout(this.browseTimer)
+      this.browseTimer = null
+    }
+    if (item.index !== undefined) {
+      this.focus = item.index
+    }
+  },
+  goBack() {
+    router.back()
+  },
+  fetchLyrics() {
+    player.requestLyrics().catch(() => {})
+  },
+  offsetBack() {
+    this.vibrate()
+    player.adjustOffset(-500)
+  },
+  offsetForward() {
+    this.vibrate()
+    player.adjustOffset(500)
+  },
+  offsetReset() {
+    this.vibrate()
+    player.resetOffset()
+  }
+}
+</script>
+
+<style>
+.page {
+  width: 100%;
+  height: 100%;
+  padding-top: 6dp;
+  padding-right: 10dp;
+  padding-bottom: 6dp;
+  padding-left: 10dp;
+  flex-direction: column;
+  background-color: #070b10;
+}
+.header {
+  flex-grow: 0;
+  flex-shrink: 0;
+  width: 100%;
+  height: 20dp;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.back {
+  width: 24dp;
+  height: 20dp;
+  align-items: center;
+  justify-content: center;
+}
+.back-icon {
+  width: 15dp;
+  height: 15dp;
+}
+.spacer {
+  width: 24dp;
+  height: 20dp;
+}
+.header-title {
+  font-size: 12dp;
+  font-weight: bold;
+  color: #9aa9bc;
+}
+.song {
+  flex-grow: 0;
+  flex-shrink: 0;
+  width: 100%;
+  margin-top: 2dp;
+  flex-direction: column;
+}
+.song-title {
+  font-size: 15.5dp;
+  font-weight: bold;
+  color: #eef4fb;
+}
+.song-artist {
+  margin-top: 1dp;
+  font-size: 11dp;
+  font-weight: bold;
+  color: #63748a;
+}
+.stage {
+  flex: 1;
+  width: 100%;
+  margin-top: 4dp;
+  flex-direction: column;
+  justify-content: center;
+}
+.line-row {
+  width: 100%;
+  min-height: 21dp;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  padding-top: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  padding-left: 0;
+}
+.row-active {
+  min-height: 24dp;
+}
+.marker {
+  width: 2dp;
+  height: 12dp;
+  border-radius: 1dp;
+  margin-right: 4dp;
+  background-color: transparent;
+}
+.marker-on {
+  height: 18dp;
+  background-color: #6ef3c5;
+}
+.line {
+  lines: 1;
+  flex: 1;
+  padding-top: 1dp;
+  padding-bottom: 1dp;
+  font-weight: bold;
+  text-align: center;
+  color: #5d6e83;
+}
+.li-s {
+  font-size: 11dp;
+  line-height: 17dp;
+}
+.li-m {
+  font-size: 12.5dp;
+  line-height: 19dp;
+}
+.li-l {
+  font-size: 14dp;
+  line-height: 21dp;
+}
+.la-s {
+  font-size: 14.5dp;
+  line-height: 20dp;
+  color: #6ef3c5;
+}
+.la-m {
+  font-size: 16.5dp;
+  line-height: 23dp;
+  color: #6ef3c5;
+}
+.la-l {
+  font-size: 18.5dp;
+  line-height: 25dp;
+  color: #6ef3c5;
+}
+.fill {
+  height: 3dp;
+  border-radius: 2dp;
+  background-color: #6ef3c5;
+}
+.fill-w0 { width: 0%; }
+.fill-w10 { width: 10%; }
+.fill-w20 { width: 20%; }
+.fill-w30 { width: 30%; }
+.fill-w40 { width: 40%; }
+.fill-w50 { width: 50%; }
+.fill-w60 { width: 60%; }
+.fill-w70 { width: 70%; }
+.fill-w80 { width: 80%; }
+.fill-w90 { width: 90%; }
+.fill-w100 { width: 100%; }
+.loading {
+  width: 100%;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.loading-text {
+  width: 100%;
+  font-size: 13dp;
+  line-height: 21dp;
+  font-weight: bold;
+  color: #7b8b9f;
+  text-align: center;
+}
+.loading-track {
+  width: 56%;
+  height: 3dp;
+  margin-top: 8dp;
+  border-radius: 2dp;
+  background-color: #141e29;
+}
+.loading-sub {
+  width: 100%;
+  margin-top: 4dp;
+  font-size: 9.5dp;
+  line-height: 14dp;
+  font-weight: bold;
+  color: #4f6074;
+  text-align: center;
+}
+.empty {
+  flex: 1;
+  width: 100%;
+  margin-top: 4dp;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.empty-icon {
+  font-size: 36dp;
+  font-weight: bold;
+  color: #1c3040;
+}
+.empty-title {
+  margin-top: 2dp;
+  font-size: 14.5dp;
+  font-weight: bold;
+  color: #c4cfdd;
+}
+.empty-desc {
+  margin-top: 3dp;
+  font-size: 11dp;
+  font-weight: bold;
+  color: #5d6e83;
+  text-align: center;
+  padding-top: 0;
+  padding-right: 8dp;
+  padding-bottom: 0;
+  padding-left: 8dp;
+}
+.empty-actions {
+  margin-top: 6dp;
+  flex-direction: row;
+}
+.chip {
+  height: 26dp;
+  padding-top: 0;
+  padding-right: 9dp;
+  padding-bottom: 0;
+  padding-left: 9dp;
+  margin-top: 0;
+  margin-right: 2dp;
+  margin-bottom: 0;
+  margin-left: 2dp;
+  border-radius: 10dp;
+  background-color: #0e151e;
+  align-items: center;
+  justify-content: center;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #1c2836;
+}
+.chip-text {
+  font-size: 11.5dp;
+  font-weight: bold;
+  color: #b9c6d6;
+}
+.footer {
+  flex-grow: 0;
+  flex-shrink: 0;
+  width: 100%;
+  height: 24dp;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+}
+.offset-label {
+  font-size: 10.5dp;
+  font-weight: bold;
+  color: #4f6074;
+  margin-right: 4dp;
+}
+.offset {
+  height: 22dp;
+  flex-direction: row;
+  align-items: center;
+  border-radius: 9dp;
+  background-color: #0e151e;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #1c2836;
+}
+.offset-btn {
+  width: 22dp;
+  height: 22dp;
+  align-items: center;
+  justify-content: center;
+}
+.offset-symbol {
+  font-size: 13.5dp;
+  font-weight: bold;
+  color: #9aa9bc;
+}
+.offset-val {
+  min-width: 34dp;
+  height: 22dp;
+  align-items: center;
+  justify-content: center;
+  border-left-width: 1px;
+  border-left-color: #1c2836;
+  border-right-width: 1px;
+  border-right-color: #1c2836;
+}
+.offset-value {
+  font-size: 11dp;
+  font-weight: bold;
+  color: #6ef3c5;
+}
+</style>
