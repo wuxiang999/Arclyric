@@ -206,6 +206,90 @@ async function save(title, artist, text) {
   return ok ? key : ''
 }
 
+// ---------- 最近一首歌词的缓存 ----------
+// 与词库分开：不占用户的歌词本，只解决「换个页面就要重新收一遍歌词分包」。
+// 第一行是 JSON 头（歌名/歌手），后面是完整 LRC 原文。
+const CACHE_DIR = 'internal://files/cache/'
+const CACHE_URI = CACHE_DIR + 'last.txt'
+
+function ensureCacheDir() {
+  return new Promise(function (resolve) {
+    file.mkdir({
+      uri: CACHE_DIR,
+      recursive: true,
+      success: function () {
+        resolve(true)
+      },
+      fail: function () {
+        resolve(false)
+      }
+    })
+  })
+}
+
+function writeRaw(uriPath, text) {
+  return new Promise(function (resolve) {
+    file.writeText({
+      uri: uriPath,
+      text: text,
+      success: function () {
+        resolve(true)
+      },
+      fail: function () {
+        resolve(false)
+      }
+    })
+  })
+}
+
+function readRaw(uriPath) {
+  return new Promise(function (resolve) {
+    file.readText({
+      uri: uriPath,
+      success: function (data) {
+        resolve((data && data.text) || '')
+      },
+      fail: function () {
+        resolve('')
+      }
+    })
+  })
+}
+
+async function saveLastLyrics(title, artist, text) {
+  if (!text) {
+    return false
+  }
+  await ensureCacheDir()
+  const head = JSON.stringify({
+    t: String(title || '').slice(0, 80),
+    a: String(artist || '').slice(0, 80)
+  })
+  return writeRaw(CACHE_URI, head + '\n' + text)
+}
+
+async function readLastLyrics() {
+  const raw = await readRaw(CACHE_URI)
+  if (!raw) {
+    return null
+  }
+  const index = raw.indexOf('\n')
+  if (index <= 0) {
+    return null
+  }
+  let meta = null
+  try {
+    meta = JSON.parse(raw.slice(0, index))
+  } catch (e) {
+    return null
+  }
+  const text = raw.slice(index + 1)
+  if (!meta || !text) {
+    return null
+  }
+  return { t: meta.t || '', a: meta.a || '', lrc: text }
+}
+
 async function seed(demos) {
   invalidate()
   await ensureDir()
@@ -268,6 +352,8 @@ export default {
   seed: seed,
   read: loadByKey,
   save: save,
+  saveLastLyrics: saveLastLyrics,
+  readLastLyrics: readLastLyrics,
   remove: removeFile,
   find: find,
   parseHeader: parseHeader

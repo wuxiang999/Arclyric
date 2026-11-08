@@ -254,6 +254,31 @@ function setLyricsText(text, title, artist, key) {
   state.lyricIndex = computeIndex()
 }
 
+// ---------- 歌词缓存 ----------
+// 每个页面是独立 JS 环境，播放页收到的歌词进了歌词页就看不见了，
+// 于是每次点开歌词页都要找手机再收一遍分包。这里把最近一首歌词落到本地：
+// 不写进用户词库（不污染歌词本），只用来「同一首歌别再收第二次」。
+function normSong(text) {
+  return String(text || '').trim().toLowerCase().replace(/\s+/g, '')
+}
+
+function cacheMatches(cache, title, artist) {
+  if (!cache) {
+    return false
+  }
+  const sameTitle = normSong(cache.t) === normSong(title)
+  const cacheArtist = normSong(cache.a)
+  const nowArtist = normSong(artist)
+  if (!sameTitle) {
+    return false
+  }
+  // 歌手任意一边为空就不参与比较，标题对上就算同一首
+  if (!cacheArtist || !nowArtist) {
+    return true
+  }
+  return cacheArtist === nowArtist
+}
+
 async function loadLyricsFor(title, artist, force) {
   const song = (title || '') + '|' + (artist || '')
   if (!force && song === state.currentSong) {
@@ -281,7 +306,17 @@ async function loadLyricsFor(title, artist, force) {
       setLyricsText(text, title || item.title, artist || item.artist, item.key)
       debug.mark('lyrics', '本地命中 ' + (item.title || title))
     } else {
-      setLyricsText('', title, artist, '')
+      // 词库没存过，但刚刚从手机收过同一首：直接用缓存，别再让手机重发一遍
+      const cache = await library.readLastLyrics()
+      if (token !== lyricsToken) {
+        return
+      }
+      if (cacheMatches(cache, title, artist)) {
+        setLyricsText(cache.lrc, title || cache.t, artist || cache.a, '')
+        debug.mark('lyrics', '缓存命中 ' + (cache.t || title))
+      } else {
+        setLyricsText('', title, artist, '')
+      }
     }
   } catch (e) {
     debug.error('lyrics', 'loadLyricsFor', e)
@@ -363,6 +398,8 @@ async function handleLyrics(payload) {
     }
   }
   setLyricsText(text, title, artist, key)
+  // 缓存最近一首：换页/退出重进都能立刻显示，不用向手机再收一遍分包
+  library.saveLastLyrics(title, artist, text).catch(function () {})
   emit('lyrics')
   debug.mark('lyrics', '应用歌词 ' + text.length + ' 字')
   if (key) {
@@ -580,6 +617,35 @@ function command(action, value) {
 
 function requestSync() {
   return command('sync')
+}
+
+// 页面重新可见时补一次状态。手环上每个页面各自持有一份状态，切页/熄屏期间
+// 漏掉的状态包靠这个立刻补回来，不用等用户发现「还停在上一首和结尾秒数」。
+function requestResync(maxAge) {
+  if (state.mock || !state.connected) {
+    return Promise.resolve(false)
+  }
+  const age = lastStateAt > 0 ? Date.now() - lastStateAt : 999999
+  if (age < (maxAge || 4000)) {
+    return Promise.resolve(false)
+  }
+  if (Date.now() - lastWatchdogAt < 3000) {
+    return Promise.resolve(false)
+  }
+  lastWatchdogAt = Date.now()
+  debug.mark('state', '页面回到前台，请求同步')
+  return requestSync()
+}
+
+// 页面切换后，通信实例的 onmessage 有可能被后初始化的页面接管（每个页面各自
+// 一份模块实例）。页面重新可见时把消息处理挂回自己，避免「明明连着却收不到状态」。
+function reattach() {
+  try {
+    transport.init()
+    transport.onMessage(handleMessage)
+  } catch (e) {
+    debug.error('state', 'reattach', e)
+  }
 }
 
 // 请求手机重推当前歌曲的歌词。
@@ -824,11 +890,13 @@ function tick() {
   }
   emit('tick')
   // 手机切歌手环没收到新状态时，会永远停在上一首和结尾秒数。
-  // 播到尾 + 状态超过 20 秒没更新，都主动要一次，5 秒最多一次避免刷屏。
+  // 播到尾 + 6 秒没收到状态，都主动要一次，5 秒最多一次避免刷屏。
+  // 手机端每 2 秒兜底发一次状态，6 秒收不到说明这轮消息丢了（换页、通道抖动），
+  // 早一点补要，比等 20 秒让用户看着上一首强。
   if (!state.mock && state.connected) {
     const now = Date.now()
     const atEnd = state.playing && state.duration > 0 && getPosition() >= state.duration - 1200
-    const stale = lastStateAt > 0 && now - lastStateAt > 20000
+    const stale = lastStateAt > 0 && now - lastStateAt > 6000
     if ((atEnd || stale) && now - lastWatchdogAt > 5000) {
       lastWatchdogAt = now
       debug.mark('state', atEnd ? '播放到结尾，请求同步' : '状态超时，请求同步')
@@ -1112,6 +1180,8 @@ export default {
   previous: previous,
   seekTo: seekTo,
   requestSync: requestSync,
+  requestResync: requestResync,
+  reattach: reattach,
   requestLyrics: requestLyrics,
   adjustOffset: adjustOffset,
   resetOffset: resetOffset,

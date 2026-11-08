@@ -181,7 +181,10 @@ export default {
   onShow() {
     debug.mark('page:player', 'onShow')
     try {
+      player.reattach()
       this.apply(player.snapshot(), 'show')
+      // 熄屏/切页期间可能漏掉状态包，回到播放页补要一次（内部有节流）
+      player.requestResync()
     } catch (e) {
       debug.error('page:player', 'onShow', e)
     }
@@ -235,6 +238,23 @@ export default {
       this.barLevel = Math.round((Number(view.percent) || 0) / 10) * 10
       this.positionText = view.positionText
       this.durationText = view.durationText
+      return
+    }
+    // 分片到一包就整页重建的话，一首歌 30 包就是 30 次重建，
+    // 手环忙着渲染，回执就慢，手机那边一包要等 1.5 秒，切歌消息全挤在后面。
+    // 这里只更新进度条，收齐后 handleLyrics 会另发一次 lyric 事件做完整刷新。
+    if (reason === 'transfer') {
+      const active = !!view.transferActive && !view.mock
+      this.transferActive = active
+      this.transferReceived = Number(view.transferReceived) || 0
+      this.transferTotal = Number(view.transferTotal) || 0
+      const pct = Number(view.transferPercent) || 0
+      this.transferLevel = Math.max(0, Math.min(100, Math.floor(pct / 10) * 10))
+      if (active) {
+        this.loading = true
+        this.loadingText = '正在接收歌词'
+        this.startLoadTimer()
+      }
       return
     }
     this.title = this.shorten(view.title || '未在播放', 8)

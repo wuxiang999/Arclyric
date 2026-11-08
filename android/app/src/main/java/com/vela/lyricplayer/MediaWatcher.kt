@@ -48,13 +48,18 @@ object MediaWatcher {
         if (sessions.isEmpty()) {
             return null
         }
-        // 优先选「最近还在更新位置」的播放中会话：
-        // 之前固定取第一个 STATE_PLAYING，多个会话并存时会一直读到旧的那一首。
-        val playingSessions = sessions.filter { it.playbackState?.state == PlaybackState.STATE_PLAYING }
-        val candidates = if (playingSessions.isNotEmpty()) {
-            playingSessions
-        } else {
-            sessions.filter { it.metadata != null }
+        // 选会话的规则（之前只按 lastPositionUpdateTime 取最大，会挑中
+        // 「上一首播完停住、却还标着 PLAYING」的旧会话，手环就永远停在上一首和结尾秒数）：
+        // 1. 先要 PLAYING；2. 再排除已经播到尾的（多半是没清掉的旧会话）；
+        // 3. 最后取最近更新位置的那个。
+        val withMeta = sessions.filter { it.metadata != null }
+        val playingSessions = withMeta.filter { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+        val live = playingSessions.filter { !isEnded(it) }
+        val candidates = when {
+            live.isNotEmpty() -> live
+            playingSessions.isNotEmpty() -> playingSessions
+            withMeta.isNotEmpty() -> withMeta
+            else -> sessions
         }
         val controller = candidates.maxByOrNull {
             it.playbackState?.lastPositionUpdateTime ?: 0L
@@ -85,6 +90,17 @@ object MediaWatcher {
             position = minOf(position, duration)
         }
         return NowPlaying(title, artist, album, duration, position, playing, controller.packageName, controller)
+    }
+
+    // 播到底的会话：位置贴着总时长。这种会话多半是上一首结束时没被清掉的残留，
+    // 只要还有别的正在播的会话，就应该把它排在后面。
+    private fun isEnded(controller: MediaController): Boolean {
+        val playback = controller.playbackState ?: return false
+        val duration = controller.metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+        if (duration <= 0L) {
+            return false
+        }
+        return playback.position >= duration - 1500L
     }
 
     fun execute(controller: MediaController?, action: String, value: Long) {

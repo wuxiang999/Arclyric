@@ -35,8 +35,6 @@
           </div>
         </div>
 
-        <text class="scroll-hint" if="{{total > listRows}}">上下滑动浏览</text>
-
         <div class="empty" if="{{total === 0}}">
           <text class="empty-icon">≡</text>
           <text class="empty-title">词本还是空的</text>
@@ -89,7 +87,7 @@ const ROW_H = 34
 const LIST_DRAG = ROW_H * 0.8
 // 阅读窗口 10 行：行高 20dp
 const READ_ROWS = 10
-const READ_H = 20
+const READ_H = 19
 const READ_DRAG = READ_H * 0.8
 // 172dp 可用宽 / 13dp 字号 ≈ 13 个字，留 4% 余量防二次折行
 const READ_UNITS = 12
@@ -147,6 +145,14 @@ export default {
         }
         this.follow(view)
       })
+      // 这个页面之前没初始化过播放状态，跟随根本没数据可用
+      player.init().then(() => {
+        if (this.detail && this.dFollow) {
+          this.follow(player.snapshot())
+        }
+      }).catch((err) => {
+        debug.error('page:book', 'player.init', err)
+      })
     } catch (e) {
       debug.error('page:book', 'subscribe', e)
     }
@@ -159,6 +165,10 @@ export default {
     }
   },
   onShow() {
+    try {
+      player.reattach()
+      player.requestResync()
+    } catch (e) {}
     if (!this.detail) {
       this.load()
     } else if (this.dFollow) {
@@ -650,7 +660,9 @@ export default {
   color: #6ef3c5;
   background-color: #123b31;
 }
-/* 固定高度的窗口：只放得下 LIST_ROWS 行，多出来的靠滑动换窗口，不整列表渲染 */
+/* 固定高度的窗口：只放得下 LIST_ROWS 行，多出来的靠滑动换窗口，不整列表渲染。
+   行高合计必须正好等于窗口高度：带 1px 下边框时 6 行会多出 6px，
+   最后一首永远被切掉一截，所以这里不用边框。 */
 .window {
   width: 100%;
   height: 204dp;
@@ -666,8 +678,6 @@ export default {
   flex-shrink: 0;
   flex-direction: row;
   align-items: center;
-  border-bottom-width: 1px;
-  border-bottom-color: #111a24;
 }
 .dot {
   width: 5dp;
@@ -712,25 +722,15 @@ export default {
 .row-action-danger {
   color: #ff7a7a;
 }
-.scroll-hint {
-  width: 100%;
-  flex-grow: 0;
-  flex-shrink: 0;
-  margin-top: 2dp;
-  font-size: 9.5dp;
-  line-height: 14dp;
-  text-align: center;
-  color: #33414f;
-}
 .read {
-  height: 200dp;
+  height: 190dp;
   margin-top: 2dp;
 }
 .line {
   lines: 1;
   width: 100%;
   font-size: 13dp;
-  line-height: 20dp;
+  line-height: 19dp;
   font-weight: bold;
   color: #b9c6d6;
   text-align: left;

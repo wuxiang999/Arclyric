@@ -130,7 +130,7 @@ export default {
     dotClass: 'demo',
     noteText: '',
     diagnosisText: '',
-    version: '1.0.3'
+    version: '1.0.4'
   },
   onInit() {
     debug.mark('page:settings', 'onInit')
@@ -152,6 +152,9 @@ export default {
     }
   },
   onShow() {
+    try {
+      player.reattach()
+    } catch (e) {}
     this.apply(player.snapshot())
   },
   onDestroy() {

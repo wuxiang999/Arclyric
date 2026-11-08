@@ -46,6 +46,11 @@ class PlayerService : Service() {
         var running = false
             private set
 
+        // 媒体通知一变就立刻抓一次状态：比每秒轮询更跟手，切歌不用等下一拍
+        @Volatile
+        var quickPoll: (() -> Unit)? = null
+            private set
+
         fun start(context: Context) {
             // 已在运行就别再 start 一遍：每次 start 都会重投 onStartCommand，
             // 歌词库页轮询时会把主循环打断成每秒好几次。
@@ -166,6 +171,14 @@ class PlayerService : Service() {
         }
     }
 
+    // 通知引起的即时轮询做个 250ms 去抖：一次切歌会连着来好几条通知
+    private val pollSoon = Runnable { poll() }
+
+    private fun schedulePoll() {
+        handler.removeCallbacks(pollSoon)
+        handler.postDelayed(pollSoon, 250L)
+    }
+
     override fun onCreate() {
         super.onCreate()
         running = true
@@ -177,6 +190,7 @@ class PlayerService : Service() {
             { status -> LogBus.log(status) }
         )
         bridge.connect()
+        quickPoll = { schedulePoll() }
         LogBus.log("同步服务已创建")
     }
 
@@ -219,6 +233,7 @@ class PlayerService : Service() {
 
     override fun onDestroy() {
         running = false
+        quickPoll = null
         handler.removeCallbacksAndMessages(null)
         fetchExecutor.shutdownNow()
         bridge.close()
@@ -333,7 +348,10 @@ class PlayerService : Service() {
         val now = SystemClock.elapsedRealtime()
         // 只在变化时发 + 每 2 秒兜底重发一次：手环侧即使漏掉一两条也能自愈。
         // 之前是 10 秒，切歌时丢一包就要等很久，表现就是「停在上一首和结尾秒数」。
-        if (signature != lastSignature || now - lastStateAt > 2000L) {
+        // 分包发送期间先不发兜底状态：几十个歌词包和状态包挤在一条小通道上，
+        // 手环回执一慢，两边就互相拖。发完 finishPending 会立刻补一条。
+        val bursting = pendingPackets != null
+        if (signature != lastSignature || (!bursting && now - lastStateAt > 2000L)) {
             lastSignature = signature
             lastStateAt = now
             sendState(playing)
@@ -577,6 +595,10 @@ class PlayerService : Service() {
     private fun finishPending(total: Int) {
         val acks = pendingAcks
         closePending()
+        // 分包期间为了给通道让路，2 秒兜底状态是暂停的；发完立刻补一条，
+        // 手环那边马上就能对上歌名和进度，不会卡在「切歌前」的旧状态。
+        lastStateAt = 0L
+        handler.postDelayed({ poll() }, 200L)
         if (acks >= total) {
             lyricsDelivered = true
             SyncStatus.update(lastTitle, lastArtist, "歌词：已送达手环（$total 包）")

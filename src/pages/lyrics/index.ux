@@ -127,7 +127,10 @@ export default {
   onShow() {
     debug.mark('page:lyrics', 'onShow')
     try {
+      player.reattach()
       this.apply(player.snapshot(), 'show')
+      // 熄屏/切页期间漏掉的状态包，回到页面补要一次（内部有节流）
+      player.requestResync()
     } catch (e) {
       debug.error('page:lyrics', 'onShow', e)
     }
@@ -177,6 +180,16 @@ export default {
   apply(view, reason) {
     // 每秒 tick 不动歌词行：高亮变化由 'line' 事件单独驱动
     if (reason === 'tick') {
+      return
+    }
+    // 分片进度只更新进度条：整页重建会拖慢回执，收齐后 'lyrics' 事件再做完整刷新
+    if (reason === 'transfer') {
+      const active = !!view.transferActive && !view.mock
+      this.transferActive = active
+      this.transferReceived = Number(view.transferReceived) || 0
+      this.transferTotal = Number(view.transferTotal) || 0
+      const pct = Number(view.transferPercent) || 0
+      this.transferLevel = Math.max(0, Math.min(100, Math.floor(pct / 10) * 10))
       return
     }
     this.title = this.shorten(view.title || '未在播放', 9)
@@ -241,7 +254,8 @@ export default {
   // 打开页面就自动要一次歌词。requestLyrics 内部有去重：
   // 播放页已经拿到这首歌就不会再向手机要第二遍，避免同一首歌词发两次。
   maybeFetch(view) {
-    if (!view || view.mock || !view.connected) {
+    // 还没初始化完就请求，会跟本地恢复的歌词打架（恢复完就白收一遍分包）
+    if (!view || !view.ready || view.mock || !view.connected) {
       return
     }
     if (view.hasLyrics) {
