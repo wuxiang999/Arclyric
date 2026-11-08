@@ -130,7 +130,7 @@ export default {
     dotClass: 'demo',
     noteText: '',
     diagnosisText: '',
-    version: '1.0.2'
+    version: '1.0.3'
   },
   onInit() {
     debug.mark('page:settings', 'onInit')

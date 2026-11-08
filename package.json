@@ -1,6 +1,6 @@
 {
   "name": "arclyric",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "弧光歌词 · 小米手环 Vela 音乐控制与同步歌词应用",
   "private": true,
   "engines": {

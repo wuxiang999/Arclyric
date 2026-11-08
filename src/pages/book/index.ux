@@ -24,14 +24,14 @@
           <text class="info-page" if="{{!manage}}">{{rangeText}}</text>
         </div>
 
-        <div class="window" if="{{total > 0}}" @touchstart="onListStart" @touchmove="onListMove" @touchend="onListEnd" @swipe="onListSwipe">
+        <div class="window" if="{{total > 0}}" @touchstart="onListStart" @touchmove="onListMove" @touchend="onListEnd">
           <div class="row" for="{{items}}" @click="onItem($item)">
-            <div class="dot"></div>
             <div class="row-main">
               <text class="row-title">{{$item.displayTitle}}</text>
               <text class="row-sub">{{$item.displayArtist}}</text>
             </div>
-            <text class="row-action {{$item.confirm ? 'row-action-danger' : ''}}">{{manage ? ($item.confirm ? '确认' : '删除') : '›'}}</text>
+            <text class="row-arrow" if="{{!manage}}">›</text>
+            <text class="row-action {{$item.confirm ? 'row-action-danger' : ''}}" if="{{manage}}">{{$item.confirm ? '确认' : '删除'}}</text>
           </div>
         </div>
 
@@ -62,7 +62,7 @@
           <text class="follow-chip {{dFollow ? 'follow-on' : ''}}" @click="backToCurrent">{{dFollow ? '跟随中' : '回到当前'}}</text>
         </div>
 
-        <div class="window read" @touchstart="onReadStart" @touchmove="onReadMove" @touchend="onReadEnd" @swipe="onReadSwipe">
+        <div class="window read" @touchstart="onReadStart" @touchmove="onReadMove" @touchend="onReadEnd">
           <text class="line {{$item.cls}}" for="{{dView}}">{{$item.text}}</text>
         </div>
 
@@ -85,13 +85,25 @@ import debug from '../../common/scripts/debug.js'
 // 列表固定 6 行窗口：行高 34dp，只渲染看得见的这几行，词本几百首也不卡
 const LIST_ROWS = 6
 const ROW_H = 34
+// 手指划到 0.8 行就滚一行：跟手滑，不用等抬手才跳
+const LIST_DRAG = ROW_H * 0.8
 // 阅读窗口 10 行：行高 20dp
 const READ_ROWS = 10
+const READ_H = 20
+const READ_DRAG = READ_H * 0.8
 // 172dp 可用宽 / 13dp 字号 ≈ 13 个字，留 4% 余量防二次折行
 const READ_UNITS = 12
-// 一次滑动翻几行
-const LIST_STEP = 3
-const READ_STEP = 4
+// 空行占位：窗口里行数恒定，滚动时框架只改文字，不重建节点树
+function emptyRow() {
+  return {
+    key: '',
+    title: '',
+    artist: '',
+    displayTitle: '',
+    displayArtist: '',
+    confirm: false
+  }
+}
 
 export default {
   data: {
@@ -124,7 +136,6 @@ export default {
     this.swiped = false
     this.swipedAt = 0
     this.touchY = 0
-    this.lastScrollAt = 0
     this.dLineFirst = []
     this.startLoadTimer()
     this.load()
@@ -192,16 +203,24 @@ export default {
     const maxStart = Math.max(0, this.total - LIST_ROWS)
     this.listStart = Math.max(0, Math.min(this.listStart, maxStart))
     const slice = this.all.slice(this.listStart, this.listStart + LIST_ROWS)
-    this.items = slice.map((item) => {
-      return {
+    // 补满固定行数：滚动到词本末尾时节点数不变，不会整块重建
+    const view = []
+    for (let i = 0; i < LIST_ROWS; i++) {
+      const item = slice[i]
+      if (!item) {
+        view.push(emptyRow())
+        continue
+      }
+      view.push({
         key: item.key,
         title: item.title,
         artist: item.artist,
         displayTitle: this.shorten(item.title, 9),
         displayArtist: item.artist ? this.shorten(item.artist, 12) : '未知歌手',
         confirm: this.manage && this.confirmKey === item.key
-      }
-    })
+      })
+    }
+    this.items = view
     this.rangeText = this.total
       ? (this.listStart + 1) + '-' + (this.listStart + slice.length) + '/' + this.total
       : '0/0'
@@ -229,39 +248,60 @@ export default {
     this.swiped = true
     this.swipedAt = Date.now()
   },
-  // ---------- 列表滑动 ----------
+  // ---------- 列表滑动（跟手）----------
   onListStart(evt) {
     const p = this.pointOf(evt, 'start')
     this.touchY = p ? Number(p.clientY) || 0 : 0
+    this.lastMoveY = this.touchY
+    this.listAcc = 0
+    this.listMoved = 0
     this.swiped = false
   },
-  onListMove() {},
-  onListEnd(evt) {
-    const p = this.pointOf(evt, 'end')
+  onListMove(evt) {
+    const p = this.pointOf(evt, 'move')
     if (!p) {
       return
     }
-    const dy = (Number(p.clientY) || 0) - this.touchY
-    if (Math.abs(dy) < 20) {
+    const y = Number(p.clientY) || 0
+    const dy = y - this.lastMoveY
+    this.lastMoveY = y
+    if (!dy) {
+      return
+    }
+    // 手指每划过 0.8 行就滚一行，列表跟着手指走，而不是抬手才跳一大段
+    this.listAcc += dy
+    let step = 0
+    while (this.listAcc <= -LIST_DRAG) {
+      this.listAcc += LIST_DRAG
+      step++
+    }
+    while (this.listAcc >= LIST_DRAG) {
+      this.listAcc -= LIST_DRAG
+      step--
+    }
+    if (!step) {
       return
     }
     this.markSwiped()
-    this.scrollList(dy < 0 ? LIST_STEP : -LIST_STEP)
+    this.listMoved += Math.abs(step)
+    this.scrollList(step)
   },
-  onListSwipe(evt) {
-    const dir = evt && evt.direction
-    if (dir !== 'up' && dir !== 'down') {
-      return
+  onListEnd() {
+    // 抬手时把剩下的一点位移补成一行，相当于一点点惯性
+    const acc = this.listAcc
+    this.listAcc = 0
+    if (Math.abs(acc) >= LIST_DRAG * 0.6) {
+      this.scrollList(acc < 0 ? 1 : -1)
+      this.listMoved += 1
     }
-    this.markSwiped()
-    this.scrollList(dir === 'up' ? LIST_STEP : -LIST_STEP)
+    if (this.listMoved) {
+      this.markSwiped()
+    }
   },
   scrollList(delta) {
-    const now = Date.now()
-    if (now - this.lastScrollAt < 180) {
+    if (!delta) {
       return
     }
-    this.lastScrollAt = now
     const maxStart = Math.max(0, this.total - LIST_ROWS)
     const next = Math.max(0, Math.min(maxStart, this.listStart + delta))
     if (next === this.listStart) {
@@ -276,7 +316,8 @@ export default {
     this.refreshList()
   },
   async onItem(item) {
-    if (!item || this.busy) {
+    // 空行占位没有 key，点了不算点
+    if (!item || !item.key || this.busy) {
       return
     }
     // 滑动结束时系统补发的 click 不算点击，否则一滑就打开一首
@@ -366,9 +407,13 @@ export default {
     const maxStart = Math.max(0, total - READ_ROWS)
     this.dStart = Math.max(0, Math.min(this.dStart, maxStart))
     const view = []
-    const end = Math.min(total, this.dStart + READ_ROWS)
-    for (let i = this.dStart; i < end; i++) {
-      const row = this.dRows[i]
+    // 固定 10 行：末尾不足补空行，节点数恒定，滚动时只改文字
+    for (let i = 0; i < READ_ROWS; i++) {
+      const row = this.dRows[this.dStart + i]
+      if (!row) {
+        view.push({ text: '', cls: 'line-off' })
+        continue
+      }
       view.push({
         text: row.text,
         cls: row.line >= 0 && row.line === this.dCur ? 'line-on' : 'line-off'
@@ -430,39 +475,58 @@ export default {
     this.follow(snap)
     this.updateStatus()
   },
-  // ---------- 阅读滑动 ----------
+  // ---------- 阅读滑动（跟手）----------
   onReadStart(evt) {
     const p = this.pointOf(evt, 'start')
     this.touchY = p ? Number(p.clientY) || 0 : 0
+    this.lastMoveY = this.touchY
+    this.readAcc = 0
+    this.readMoved = 0
     this.swiped = false
   },
-  onReadMove() {},
-  onReadEnd(evt) {
-    const p = this.pointOf(evt, 'end')
+  onReadMove(evt) {
+    const p = this.pointOf(evt, 'move')
     if (!p) {
       return
     }
-    const dy = (Number(p.clientY) || 0) - this.touchY
-    if (Math.abs(dy) < 20) {
+    const y = Number(p.clientY) || 0
+    const dy = y - this.lastMoveY
+    this.lastMoveY = y
+    if (!dy) {
+      return
+    }
+    this.readAcc += dy
+    let step = 0
+    while (this.readAcc <= -READ_DRAG) {
+      this.readAcc += READ_DRAG
+      step++
+    }
+    while (this.readAcc >= READ_DRAG) {
+      this.readAcc -= READ_DRAG
+      step--
+    }
+    if (!step) {
       return
     }
     this.markSwiped()
-    this.scrollRead(dy < 0 ? READ_STEP : -READ_STEP)
+    this.readMoved += Math.abs(step)
+    this.scrollRead(step)
   },
-  onReadSwipe(evt) {
-    const dir = evt && evt.direction
-    if (dir !== 'up' && dir !== 'down') {
-      return
+  onReadEnd() {
+    const acc = this.readAcc
+    this.readAcc = 0
+    if (Math.abs(acc) >= READ_DRAG * 0.6) {
+      this.scrollRead(acc < 0 ? 1 : -1)
+      this.readMoved += 1
     }
-    this.markSwiped()
-    this.scrollRead(dir === 'up' ? READ_STEP : -READ_STEP)
+    if (this.readMoved) {
+      this.markSwiped()
+    }
   },
   scrollRead(delta) {
-    const now = Date.now()
-    if (now - this.lastScrollAt < 180) {
+    if (!delta) {
       return
     }
-    this.lastScrollAt = now
     const maxStart = Math.max(0, this.dRows.length - READ_ROWS)
     const next = Math.max(0, Math.min(maxStart, this.dStart + delta))
     if (next === this.dStart) {
@@ -611,6 +675,13 @@ export default {
   border-radius: 3dp;
   background-color: #1f3b4c;
   margin-right: 6dp;
+}
+.row-arrow {
+  font-size: 14dp;
+  line-height: 20dp;
+  font-weight: bold;
+  color: #33414f;
+  padding-left: 4dp;
 }
 .row-main {
   flex: 1;

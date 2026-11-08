@@ -1,8 +1,8 @@
 {
   "package": "com.vela.lyricplayer",
   "name": "弧光歌词",
-  "versionName": "1.0.2",
-  "versionCode": 3,
+  "versionName": "1.0.3",
+  "versionCode": 4,
   "minPlatformVersion": 1000,
   "icon": "/common/images/icon128.png",
   "deviceTypeList": [
