@@ -12,7 +12,7 @@ bash ./gradlew :app:assembleDebug :app:assembleRelease --no-daemon "${ARGS[@]}"
 
 DIST="$(cd .. && pwd)/dist"
 VERSION="$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)"
-VERSION="${VERSION:-1.0.1}"
+VERSION="${VERSION:-1.0.2}"
 mkdir -p "$DIST"
 cp app/build/outputs/apk/debug/app-debug.apk "$DIST/Arclyric-$VERSION-debug.apk"
 cp app/build/outputs/apk/release/app-release.apk "$DIST/Arclyric-$VERSION-release.apk"

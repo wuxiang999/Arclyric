@@ -47,11 +47,19 @@ class LyricsActivity : Activity() {
     private lateinit var tabLocal: TextView
     private lateinit var bandHint: TextView
     private lateinit var btnRefreshBand: TextView
+    private lateinit var btnBatch: TextView
+    private lateinit var btnSelectAll: TextView
+    private lateinit var btnBatchPush: TextView
+    private lateinit var btnBatchDelete: TextView
+    private lateinit var batchCount: TextView
 
     private val handler = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private var importing = false
     private var mode = MODE_BAND
+    // 批量管理：选中的键（手环页是词库 key，缓存页是文件名）
+    private var batchMode = false
+    private val selected = LinkedHashSet<String>()
 
     // 手环词库有新快照时刷新列表
     private val bandListener: () -> Unit = {
@@ -76,6 +84,11 @@ class LyricsActivity : Activity() {
         tabLocal = findViewById(R.id.tabLocal)
         bandHint = findViewById(R.id.bandHint)
         btnRefreshBand = findViewById(R.id.btnRefreshBand)
+        btnBatch = findViewById(R.id.btnBatch)
+        btnSelectAll = findViewById(R.id.btnSelectAll)
+        btnBatchPush = findViewById(R.id.btnBatchPush)
+        btnBatchDelete = findViewById(R.id.btnBatchDelete)
+        batchCount = findViewById(R.id.batchCount)
 
         findViewById<View>(R.id.btnBack).setOnClickListener { finish() }
         importButton.setOnClickListener { importPlaylist() }
@@ -88,6 +101,10 @@ class LyricsActivity : Activity() {
             toast("正在向手环请求词库…")
             refreshBand()
         }
+        btnBatch.setOnClickListener { toggleBatch() }
+        btnSelectAll.setOnClickListener { selectAll() }
+        btnBatchPush.setOnClickListener { batchPush() }
+        btnBatchDelete.setOnClickListener { batchDelete() }
 
         BandLibrary.addListener(bandListener)
         switchMode(MODE_BAND)
@@ -118,6 +135,11 @@ class LyricsActivity : Activity() {
     // ---------- 视图切换 ----------
 
     private fun switchMode(next: Int) {
+        if (next != mode) {
+            // 切页时退出批量：两边的选中项含义不一样，混在一起会删错
+            batchMode = false
+            selected.clear()
+        }
         mode = next
         val band = next == MODE_BAND
         tabBand.setTextColor(getColor(if (band) R.color.accent_deep else R.color.text_secondary))
@@ -166,6 +188,138 @@ class LyricsActivity : Activity() {
         } else {
             renderLocal()
         }
+        updateBatchBar()
+    }
+
+    // ---------- 批量管理 ----------
+
+    private fun toggleBatch() {
+        batchMode = !batchMode
+        selected.clear()
+        render()
+    }
+
+    private fun selectAll() {
+        if (!batchMode) {
+            return
+        }
+        val keys = if (mode == MODE_BAND) {
+            BandLibrary.items.map { it.key }
+        } else {
+            try {
+                repository.list().map { it.name }
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+        if (selected.size == keys.size) {
+            selected.clear()
+        } else {
+            selected.clear()
+            selected.addAll(keys)
+        }
+        render()
+    }
+
+    private fun updateBatchBar() {
+        val count = selected.size
+        btnBatch.text = if (batchMode) "完成" else "批量管理"
+        btnBatch.setTextColor(getColor(if (batchMode) R.color.accent else R.color.text_secondary))
+        btnBatch.setBackgroundResource(if (batchMode) R.drawable.bg_primary else R.drawable.bg_chip)
+        btnSelectAll.visibility = if (batchMode) View.VISIBLE else View.GONE
+        btnBatchPush.visibility = if (batchMode) View.VISIBLE else View.GONE
+        btnBatchDelete.visibility = if (batchMode) View.VISIBLE else View.GONE
+        batchCount.text = if (batchMode) "已选 $count 首" else ""
+        btnBatchPush.alpha = if (count > 0) 1f else 0.4f
+        btnBatchDelete.alpha = if (count > 0) 1f else 0.4f
+    }
+
+    private fun toggleSelect(key: String) {
+        if (selected.contains(key)) {
+            selected.remove(key)
+        } else {
+            selected.add(key)
+        }
+        render()
+    }
+
+    private fun applyRowState(row: View, key: String) {
+        val marker = row.findViewById<TextView>(R.id.rowSend)
+        val delete = row.findViewById<View>(R.id.rowDelete)
+        if (!batchMode) {
+            return
+        }
+        val on = selected.contains(key)
+        marker.visibility = View.VISIBLE
+        marker.text = if (on) "已选" else "选择"
+        marker.setTextColor(getColor(if (on) R.color.accent_deep else R.color.accent))
+        marker.setBackgroundResource(if (on) R.drawable.bg_primary else R.drawable.bg_chip)
+        marker.setOnClickListener { toggleSelect(key) }
+        delete.visibility = View.GONE
+    }
+
+    private fun batchPush() {
+        val names = ArrayList<String>()
+        if (mode == MODE_BAND) {
+            for (key in selected) {
+                val file = localFile(key)
+                if (file != null) {
+                    names.add(file.name)
+                }
+            }
+        } else {
+            names.addAll(selected)
+        }
+        if (names.isEmpty()) {
+            toast("选中的歌词手机里没有缓存，无法推送")
+            return
+        }
+        PlayerService.start(this)
+        PlayerService.pushFiles(this, names)
+        toast("已加入推送队列：" + names.size + " 首")
+        LogBus.log("批量推送 ${names.size} 首歌词")
+        batchMode = false
+        selected.clear()
+        render()
+        handler.postDelayed({ refreshBand() }, 2500L)
+    }
+
+    private fun batchDelete() {
+        val count = selected.size
+        if (count == 0) {
+            toast("先选择要删除的歌词")
+            return
+        }
+        val where = if (mode == MODE_BAND) "手环词库和手机缓存" else "手机缓存"
+        AlertDialog.Builder(this)
+            .setTitle("删除 $count 首")
+            .setMessage("将从$where 中删除选中的 $count 首歌词，无法恢复。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("删除") { _, _ ->
+                val keys = ArrayList(selected)
+                if (mode == MODE_BAND) {
+                    for (key in keys) {
+                        val file = localFile(key)
+                        if (file != null) {
+                            repository.delete(file.name)
+                        }
+                        PlayerService.deleteFromBand(this@LyricsActivity, key)
+                    }
+                } else {
+                    for (name in keys) {
+                        repository.delete(name)
+                    }
+                }
+                LogBus.log("批量删除 ${keys.size} 首歌词")
+                toast("已删除 $count 首")
+                batchMode = false
+                selected.clear()
+                render()
+                if (mode == MODE_BAND) {
+                    handler.postDelayed({ refreshBand() }, 1500L)
+                }
+            }
+            .show()
     }
 
     // ---------- 手环词库（镜像） ----------
@@ -191,14 +345,21 @@ class LyricsActivity : Activity() {
             row.findViewById<View>(R.id.rowSend).visibility =
                 if (local != null) View.VISIBLE else View.GONE
             row.findViewById<View>(R.id.rowSend).setOnClickListener {
-                if (local != null) {
+                if (!batchMode && local != null) {
                     send(local, item.title)
                 }
             }
             row.findViewById<View>(R.id.rowDelete).setOnClickListener {
                 confirmDeleteOnBand(item, local)
             }
-            row.setOnClickListener { previewBand(item, local) }
+            row.setOnClickListener {
+                if (batchMode) {
+                    toggleSelect(item.key)
+                } else {
+                    previewBand(item, local)
+                }
+            }
+            applyRowState(row, item.key)
             listContainer.addView(row)
         }
     }
@@ -273,6 +434,11 @@ class LyricsActivity : Activity() {
             row.setOnClickListener { preview(file, title, artist) }
             row.findViewById<View>(R.id.rowSend).setOnClickListener { send(file, title) }
             row.findViewById<View>(R.id.rowDelete).setOnClickListener { confirmDelete(file, title) }
+            if (batchMode) {
+                row.setOnClickListener { toggleSelect(file.name) }
+                row.findViewById<View>(R.id.rowSend).setOnClickListener { toggleSelect(file.name) }
+            }
+            applyRowState(row, file.name)
             listContainer.addView(row)
         }
     }

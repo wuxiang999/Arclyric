@@ -230,6 +230,88 @@
             android:textSize="13sp" />
     </LinearLayout>
 
+    <!-- 批量管理：多选删除 / 多选推送 -->
+    <LinearLayout
+        android:id="@+id/batchRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/btnBatch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_chip"
+            android:paddingLeft="13dp"
+            android:paddingTop="7dp"
+            android:paddingRight="13dp"
+            android:paddingBottom="7dp"
+            android:text="批量管理"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btnSelectAll"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="8dp"
+            android:background="@drawable/bg_chip"
+            android:paddingLeft="13dp"
+            android:paddingTop="7dp"
+            android:paddingRight="13dp"
+            android:paddingBottom="7dp"
+            android:text="全选"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/btnBatchPush"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="8dp"
+            android:background="@drawable/bg_chip"
+            android:paddingLeft="13dp"
+            android:paddingTop="7dp"
+            android:paddingRight="13dp"
+            android:paddingBottom="7dp"
+            android:text="推送"
+            android:textColor="@color/accent"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/btnBatchDelete"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="8dp"
+            android:background="@drawable/bg_chip"
+            android:paddingLeft="13dp"
+            android:paddingTop="7dp"
+            android:paddingRight="13dp"
+            android:paddingBottom="7dp"
+            android:text="删除"
+            android:textColor="@color/danger"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/batchCount"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="end"
+            android:text=""
+            android:textColor="@color/text_muted"
+            android:textSize="11sp" />
+    </LinearLayout>
+
     <TextView
         android:id="@+id/emptyView"
         android:layout_width="match_parent"

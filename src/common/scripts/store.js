@@ -2,7 +2,9 @@ import storage from '@system.storage'
 
 const DEFAULTS = {
   mock: true,
-  autoSave: true,
+  // 默认不自动保存：每首歌都塞进词库会把词本淹掉，改成播放页手动「加入歌词本」。
+  // 想恢复自动保存的用户可以在设置里打开这个开关。
+  autoSave: false,
   follow: true,
   offset: 0,
   lineHeight: 1.6,

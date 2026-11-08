@@ -11,7 +11,7 @@
     <div class="btn btn-ghost" @click="go('/pages/settings')">
       <text class="btn-t btn-t-ghost">设置</text>
     </div>
-    <text class="ver">v1.0.1</text>
+    <text class="ver">v1.0.2</text>
   </div>
 </template>
 

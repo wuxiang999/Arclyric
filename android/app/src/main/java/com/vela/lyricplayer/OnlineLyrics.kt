@@ -16,7 +16,7 @@ import java.net.URLEncoder
  */
 object OnlineLyrics {
     private const val UA =
-        "Mozilla/5.0 (Linux; Android 14; Arclyric) Arclyric/1.0.0 (https://github.com/wuxiang999/Arclyric)"
+        "Mozilla/5.0 (Linux; Android 14; Arclyric) Arclyric/1.0.0 (https://github.com/vela/arclyric)"
 
     private const val REFERER_QQ = "https://y.qq.com/"
 

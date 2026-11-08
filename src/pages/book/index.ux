@@ -9,86 +9,66 @@
       <text class="manage" if="{{detail}}" @click="closeDetail">返回列表</text>
     </div>
 
-    <!-- 列表 -->
+    <!-- 列表：固定 6 行窗口 + 上下滑动，不再翻页 -->
     <div class="body" if="{{!detail}}">
       <block if="{{loading}}">
         <div class="loading-box">
-          <text class="loading-text">{{loadingText}}{{dots}}</text>
-          <div class="loading-track">
-            <div class="fill fill-w{{loadWidth}}"></div>
-          </div>
+          <image class="spinner" src="/common/images/spin{{spinFrame}}.png"></image>
+          <text class="loading-text">{{loadingText}}</text>
         </div>
       </block>
       <block if="{{!loading}}">
-      <div class="info">
-        <text class="info-text">共 {{total}} 首 · 本地词库</text>
-        <text class="info-hint" if="{{manage}}">再次点击删除</text>
-        <text class="info-page" if="{{!manage}}">{{page + 1}}/{{pageCount}}</text>
-      </div>
+        <div class="info">
+          <text class="info-text">共 {{total}} 首</text>
+          <text class="info-hint" if="{{manage}}">再点一次删除</text>
+          <text class="info-page" if="{{!manage}}">{{rangeText}}</text>
+        </div>
 
-      <div class="list" if="{{total > 0}}">
-        <!-- 只在外层绑一次 click：以前五层都绑，事件冒泡让一次点击被当成两次，
-             管理模式下「再点一次确认删除」直接变成首点即删。 -->
-        <div class="row" for="{{items}}" @click="onItem($item)">
-          <div class="dot"></div>
-          <div class="row-main">
-            <text class="row-title">{{$item.displayTitle}}</text>
-            <text class="row-sub">{{$item.displayArtist}}</text>
+        <div class="window" if="{{total > 0}}" @touchstart="onListStart" @touchmove="onListMove" @touchend="onListEnd" @swipe="onListSwipe">
+          <div class="row" for="{{items}}" @click="onItem($item)">
+            <div class="dot"></div>
+            <div class="row-main">
+              <text class="row-title">{{$item.displayTitle}}</text>
+              <text class="row-sub">{{$item.displayArtist}}</text>
+            </div>
+            <text class="row-action {{$item.confirm ? 'row-action-danger' : ''}}">{{manage ? ($item.confirm ? '确认' : '删除') : '›'}}</text>
           </div>
-          <text class="row-action {{$item.confirm ? 'row-action-danger' : ''}}">{{manage ? ($item.confirm ? '确认' : '删除') : '›'}}</text>
         </div>
-      </div>
 
-      <div class="pager" if="{{total > pageSize}}">
-        <div class="pager-btn {{page <= 0 ? 'pager-off' : ''}}" @click="prevPage">
-          <text class="pager-text">上一页</text>
-        </div>
-        <text class="pager-info">{{page + 1}} / {{pageCount}}</text>
-        <div class="pager-btn {{page >= pageCount - 1 ? 'pager-off' : ''}}" @click="nextPage">
-          <text class="pager-text">下一页</text>
-        </div>
-      </div>
+        <text class="scroll-hint" if="{{total > listRows}}">上下滑动浏览</text>
 
-      <div class="empty" if="{{total === 0}}">
-        <text class="empty-icon">≡</text>
-        <text class="empty-title">词本还是空的</text>
-        <text class="empty-desc">接收手机歌词会自动保存，也可以先载入示例</text>
-        <div class="chip" @click="loadDemo">
-          <text class="chip-text">载入示例歌词</text>
+        <div class="empty" if="{{total === 0}}">
+          <text class="empty-icon">≡</text>
+          <text class="empty-title">词本还是空的</text>
+          <text class="empty-desc">播放页点「加入歌词本」即可收藏</text>
+          <div class="chip" @click="loadDemo">
+            <text class="chip-text">载入示例歌词</text>
+          </div>
         </div>
-      </div>
       </block>
     </div>
 
-    <!-- 阅读（不跳页，直接在本页展开，避免路由参数丢失导致打不开） -->
+    <!-- 阅读：窗口式上下滑动，跟随当前播放句自动滚动 -->
     <div class="body" if="{{detail}}">
       <block if="{{loading}}">
         <div class="loading-box">
-          <text class="loading-text">{{loadingText}}{{dots}}</text>
-          <div class="loading-track">
-            <div class="fill fill-w{{loadWidth}}"></div>
-          </div>
+          <image class="spinner" src="/common/images/spin{{spinFrame}}.png"></image>
+          <text class="loading-text">{{loadingText}}</text>
         </div>
       </block>
       <block if="{{!loading}}">
-      <div class="info">
-        <text class="info-text">{{dTitle}}</text>
-        <text class="info-page">{{dPage + 1}}/{{dPageCount}}</text>
-      </div>
-
-      <div class="lines">
-        <text class="line" for="{{dView}}">{{$item.text}}</text>
-      </div>
-
-      <div class="pager" if="{{dPageCount > 1}}">
-        <div class="pager-btn {{dPage <= 0 ? 'pager-off' : ''}}" @click="dPrev">
-          <text class="pager-text">上一页</text>
+        <div class="info">
+          <text class="info-text">{{dTitle}}</text>
+          <text class="follow-chip {{dFollow ? 'follow-on' : ''}}" @click="backToCurrent">{{dFollow ? '跟随中' : '回到当前'}}</text>
         </div>
-        <text class="pager-info">{{dPage + 1}} / {{dPageCount}}</text>
-        <div class="pager-btn {{dPage >= dPageCount - 1 ? 'pager-off' : ''}}" @click="dNext">
-          <text class="pager-text">下一页</text>
+
+        <div class="window read" @touchstart="onReadStart" @touchmove="onReadMove" @touchend="onReadEnd" @swipe="onReadSwipe">
+          <text class="line {{$item.cls}}" for="{{dView}}">{{$item.text}}</text>
         </div>
-      </div>
+
+        <div class="read-foot">
+          <text class="foot-text">{{dStatus}}</text>
+        </div>
       </block>
     </div>
   </div>
@@ -99,79 +79,99 @@ import router from '@system.router'
 import library from '../../common/scripts/library.js'
 import lrc from '../../common/scripts/lrc.js'
 import demo from '../../common/scripts/demo-lyrics.js'
+import player from '../../common/scripts/player-state.js'
 import debug from '../../common/scripts/debug.js'
 
-// 一页 5 行：行高 34dp，加上顶栏和翻页条刚好一屏，不用滚动
-const PAGE_SIZE = 5
-// 阅读页一页 9 行，行高 20dp（内容区约 198dp，留出翻页条）
-const READ_SIZE = 9
-// 172dp 可用宽 / 13dp 字号 ≈ 13 个字。
-// 一句最多折成 2 行，长句不再被省略号截断。
-const READ_UNITS = 13
+// 列表固定 6 行窗口：行高 34dp，只渲染看得见的这几行，词本几百首也不卡
+const LIST_ROWS = 6
+const ROW_H = 34
+// 阅读窗口 10 行：行高 20dp
+const READ_ROWS = 10
+// 172dp 可用宽 / 13dp 字号 ≈ 13 个字，留 4% 余量防二次折行
+const READ_UNITS = 12
+// 一次滑动翻几行
+const LIST_STEP = 3
+const READ_STEP = 4
 
 export default {
   data: {
     all: [],
     items: [],
     total: 0,
-    page: 0,
-    pageCount: 1,
-    pageSize: PAGE_SIZE,
+    listRows: LIST_ROWS,
+    listStart: 0,
+    rangeText: '',
     manage: false,
     confirmKey: '',
     detail: false,
     dTitle: '',
     dArtist: '',
+    dSongTitle: '',
     dRows: [],
     dView: [],
-    dPage: 0,
-    dPageCount: 1,
-    dPageSize: READ_SIZE,
+    dStart: 0,
+    dFollow: true,
+    dCur: -1,
+    dStatus: '',
     loading: true,
     loadingText: '正在读取词库',
-    dots: '',
-    loadWidth: 30,
-    dotStep: 0,
-    loadStep: 0
+    spinFrame: 0
   },
   onInit() {
     debug.mark('page:book', 'onInit')
     this.loadTimer = null
+    this.busy = false
+    this.swiped = false
+    this.swipedAt = 0
+    this.touchY = 0
+    this.lastScrollAt = 0
+    this.dLineFirst = []
     this.startLoadTimer()
     this.load()
+    // 歌词本跟着播放进度自己滚：只在阅读页且「跟随」时动，tick 不处理省性能
+    try {
+      this.unsubscribe = player.subscribe((reason, view) => {
+        if (reason === 'tick' || !this.detail || !this.dFollow) {
+          return
+        }
+        this.follow(view)
+      })
+    } catch (e) {
+      debug.error('page:book', 'subscribe', e)
+    }
+  },
+  onDestroy() {
+    this.stopLoadTimer()
+    if (this.unsubscribe) {
+      this.unsubscribe()
+      this.unsubscribe = null
+    }
+  },
+  onShow() {
+    if (!this.detail) {
+      this.load()
+    } else if (this.dFollow) {
+      this.follow(player.snapshot())
+    }
   },
   startLoadTimer() {
     if (this.loadTimer) {
       return
     }
-    // Vela 没有 CSS 动画，用定时器换帧做加载动效
+    // Vela 没有 CSS 动画，圆形加载是 8 帧图片轮换
     this.loadTimer = setInterval(() => {
-      const step = (this.dotStep + 1) % 4
-      this.dotStep = step
-      this.dots = step === 0 ? '' : step === 1 ? '·' : step === 2 ? '··' : '···'
-      const seq = [20, 40, 60, 80, 60, 40]
-      this.loadStep = (this.loadStep + 1) % seq.length
-      this.loadWidth = seq[this.loadStep]
-    }, 320)
+      this.spinFrame = (this.spinFrame + 1) % 8
+    }, 130)
   },
   stopLoadTimer() {
     if (this.loadTimer) {
       clearInterval(this.loadTimer)
       this.loadTimer = null
     }
-    this.dots = ''
-  },
-  onDestroy() {
-    this.stopLoadTimer()
-  },
-  onShow() {
-    if (!this.detail) {
-      this.load()
-    }
+    this.spinFrame = 0
   },
   async load() {
-    const first = !this.total
-    if (first) {
+    if (!this.total) {
       this.loadingText = '正在读取词库'
       this.loading = true
       this.startLoadTimer()
@@ -180,10 +180,7 @@ export default {
       const list = await library.list()
       this.all = list
       this.total = list.length
-      if (this.page > 0 && this.page * PAGE_SIZE >= list.length) {
-        this.page = Math.max(0, Math.ceil(list.length / PAGE_SIZE) - 1)
-      }
-      this.refresh()
+      this.refreshList()
       debug.mark('page:book', '载入 ' + list.length + ' 首')
     } catch (e) {
       debug.error('page:book', 'load', e)
@@ -191,9 +188,10 @@ export default {
     this.loading = false
     this.stopLoadTimer()
   },
-  refresh() {
-    const start = this.page * PAGE_SIZE
-    const slice = this.all.slice(start, start + PAGE_SIZE)
+  refreshList() {
+    const maxStart = Math.max(0, this.total - LIST_ROWS)
+    this.listStart = Math.max(0, Math.min(this.listStart, maxStart))
+    const slice = this.all.slice(this.listStart, this.listStart + LIST_ROWS)
     this.items = slice.map((item) => {
       return {
         key: item.key,
@@ -204,39 +202,94 @@ export default {
         confirm: this.manage && this.confirmKey === item.key
       }
     })
-    this.pageCount = Math.max(1, Math.ceil(this.total / PAGE_SIZE))
+    this.rangeText = this.total
+      ? (this.listStart + 1) + '-' + (this.listStart + slice.length) + '/' + this.total
+      : '0/0'
   },
   shorten(text, max) {
     const value = String(text || '')
     return value.length > max ? value.slice(0, max - 1) + '…' : value
   },
-  prevPage() {
-    if (this.page <= 0) {
-      return
+  pointOf(evt, phase) {
+    if (!evt) {
+      return null
     }
-    this.page--
-    this.refresh()
+    const list = phase === 'end'
+      ? (evt.changedTouches || evt.touches)
+      : (evt.touches || evt.changedTouches)
+    if (list && list.length) {
+      return list[0]
+    }
+    if (evt.clientY !== undefined) {
+      return evt
+    }
+    return null
   },
-  nextPage() {
-    if (this.page >= this.pageCount - 1) {
+  markSwiped() {
+    this.swiped = true
+    this.swipedAt = Date.now()
+  },
+  // ---------- 列表滑动 ----------
+  onListStart(evt) {
+    const p = this.pointOf(evt, 'start')
+    this.touchY = p ? Number(p.clientY) || 0 : 0
+    this.swiped = false
+  },
+  onListMove() {},
+  onListEnd(evt) {
+    const p = this.pointOf(evt, 'end')
+    if (!p) {
       return
     }
-    this.page++
-    this.refresh()
+    const dy = (Number(p.clientY) || 0) - this.touchY
+    if (Math.abs(dy) < 20) {
+      return
+    }
+    this.markSwiped()
+    this.scrollList(dy < 0 ? LIST_STEP : -LIST_STEP)
+  },
+  onListSwipe(evt) {
+    const dir = evt && evt.direction
+    if (dir !== 'up' && dir !== 'down') {
+      return
+    }
+    this.markSwiped()
+    this.scrollList(dir === 'up' ? LIST_STEP : -LIST_STEP)
+  },
+  scrollList(delta) {
+    const now = Date.now()
+    if (now - this.lastScrollAt < 180) {
+      return
+    }
+    this.lastScrollAt = now
+    const maxStart = Math.max(0, this.total - LIST_ROWS)
+    const next = Math.max(0, Math.min(maxStart, this.listStart + delta))
+    if (next === this.listStart) {
+      return
+    }
+    this.listStart = next
+    this.refreshList()
   },
   toggleManage() {
     this.manage = !this.manage
     this.confirmKey = ''
-    this.refresh()
+    this.refreshList()
   },
   async onItem(item) {
     if (!item || this.busy) {
       return
     }
+    // 滑动结束时系统补发的 click 不算点击，否则一滑就打开一首
+    if (this.swiped) {
+      this.swiped = false
+      if (Date.now() - this.swipedAt < 500) {
+        return
+      }
+    }
     if (this.manage) {
       if (this.confirmKey !== item.key) {
         this.confirmKey = item.key
-        this.refresh()
+        this.refreshList()
         return
       }
       this.busy = true
@@ -248,7 +301,7 @@ export default {
     }
     await this.openDetail(item)
   },
-  // 直接在本页展开，不再依赖 router 参数 / storage，点开一定能看到内容
+  // 直接在本页展开，不依赖路由参数，点开一定能看到内容
   async openDetail(item) {
     if (this.busy) {
       return
@@ -258,63 +311,173 @@ export default {
     this.loading = true
     this.startLoadTimer()
     this.detail = true
-    this.dTitle = this.shorten(item.title || '未命名', 12)
+    this.dTitle = this.shorten((item.title || '未命名') + (item.artist ? ' · ' + item.artist : ''), 12)
     this.dArtist = item.artist || ''
+    this.dSongTitle = item.title || ''
     this.dRows = []
     this.dView = []
+    this.dLineFirst = []
+    this.dCur = -1
     let rows = []
     try {
       const text = await library.read(item.key)
       debug.mark('page:book', '打开 ' + item.title + ' ' + text.length + ' 字')
       if (text) {
         const parsed = lrc.parse(text, item.title, item.artist)
-        for (let i = 0; i < parsed.lines.length; i++) {
-          // 一句最多折两行：长句在歌词本里也能完整读到，而不是被省略号砍掉
-          const parts = lrc.wrap(parsed.lines[i].text, READ_UNITS, 2)
-          const list = parts.length ? parts : ['']
-          for (let j = 0; j < list.length; j++) {
-            rows.push({ text: list[j] })
-          }
-        }
+        rows = this.buildReadRows(parsed.lines)
       }
       if (!rows.length) {
-        rows.push({ text: '这首歌的歌词读不出来，让手机重新推一次试试' })
+        rows = [{ text: '这首歌的歌词读不出来，让手机重新推一次试试', line: -1 }]
       }
     } catch (e) {
       debug.error('page:book', 'openDetail', e)
-      // 读取失败也要给出可见内容，不能留一页空白让人以为卡死
-      rows = [{ text: '打开失败，请返回列表重试' }]
+      rows = [{ text: '打开失败，请返回列表重试', line: -1 }]
     }
-    this.dTitle = this.shorten((item.title || '未命名') + (item.artist ? ' · ' + item.artist : ''), 12)
-    this.dArtist = item.artist || ''
     this.dRows = rows
-    this.dPage = 0
-    this.dPageCount = Math.max(1, Math.ceil(rows.length / READ_SIZE))
-    this.dView = rows.slice(0, READ_SIZE)
+    // 打开的就是正在播放的这首：直接跟随，并按当前句居中
+    const snap = player.snapshot()
+    const same = this.sameSong(snap.title, item.title) && snap.lyricIndex >= 0
+    this.dFollow = same
+    this.dCur = same ? snap.lyricIndex : -1
+    this.dStart = same ? Math.max(0, (this.dLineFirst[snap.lyricIndex] || 0) - 4) : 0
+    this.sliceRead()
+    this.updateStatus()
     this.loading = false
     this.stopLoadTimer()
     this.busy = false
   },
+  buildReadRows(lines) {
+    const rows = []
+    const first = []
+    for (let i = 0; i < lines.length; i++) {
+      first.push(rows.length)
+      // 一句最多折两行，长句在歌词本里也能完整读到，不用省略号砍掉
+      const parts = lrc.wrap(lines[i].text, READ_UNITS, 2)
+      const list = parts.length ? parts : ['']
+      for (let j = 0; j < list.length; j++) {
+        rows.push({ text: list[j], line: i })
+      }
+    }
+    this.dLineFirst = first
+    return rows
+  },
+  sliceRead() {
+    const total = this.dRows.length
+    const maxStart = Math.max(0, total - READ_ROWS)
+    this.dStart = Math.max(0, Math.min(this.dStart, maxStart))
+    const view = []
+    const end = Math.min(total, this.dStart + READ_ROWS)
+    for (let i = this.dStart; i < end; i++) {
+      const row = this.dRows[i]
+      view.push({
+        text: row.text,
+        cls: row.line >= 0 && row.line === this.dCur ? 'line-on' : 'line-off'
+      })
+    }
+    this.dView = view
+  },
+  sameSong(a, b) {
+    const norm = (text) => String(text || '')
+      .toLowerCase()
+      .replace(/[\s\-_—·・.,，。'"'']/g, '')
+    const left = norm(a)
+    const right = norm(b)
+    if (!left || !right) {
+      return false
+    }
+    return left === right || left.indexOf(right) >= 0 || right.indexOf(left) >= 0
+  },
+  // 按当前播放句把窗口滚到中间：每句只重建 10 行，开销很小
+  follow(view) {
+    if (!view || !this.dRows.length) {
+      return
+    }
+    const idx = view.lyricIndex
+    if (idx < 0) {
+      return
+    }
+    const row = this.dLineFirst[idx]
+    if (row === undefined) {
+      return
+    }
+    const start = Math.max(0, row - 4)
+    const changed = idx !== this.dCur || start !== this.dStart
+    this.dCur = idx
+    this.dStart = start
+    if (changed) {
+      this.sliceRead()
+      this.updateStatus()
+    }
+  },
+  updateStatus() {
+    const lines = this.dLineFirst.length
+    if (!lines) {
+      this.dStatus = ''
+      return
+    }
+    const current = this.dCur >= 0 ? (this.dCur + 1) + '/' + lines + ' 句' : '共 ' + lines + ' 句'
+    this.dStatus = this.dFollow ? '跟随播放 · ' + current : '手动浏览 · ' + current
+  },
+  backToCurrent() {
+    const snap = player.snapshot()
+    const same = this.sameSong(snap.title, this.dSongTitle)
+    if (!same) {
+      this.dFollow = false
+      this.updateStatus()
+      return
+    }
+    this.dFollow = true
+    this.follow(snap)
+    this.updateStatus()
+  },
+  // ---------- 阅读滑动 ----------
+  onReadStart(evt) {
+    const p = this.pointOf(evt, 'start')
+    this.touchY = p ? Number(p.clientY) || 0 : 0
+    this.swiped = false
+  },
+  onReadMove() {},
+  onReadEnd(evt) {
+    const p = this.pointOf(evt, 'end')
+    if (!p) {
+      return
+    }
+    const dy = (Number(p.clientY) || 0) - this.touchY
+    if (Math.abs(dy) < 20) {
+      return
+    }
+    this.markSwiped()
+    this.scrollRead(dy < 0 ? READ_STEP : -READ_STEP)
+  },
+  onReadSwipe(evt) {
+    const dir = evt && evt.direction
+    if (dir !== 'up' && dir !== 'down') {
+      return
+    }
+    this.markSwiped()
+    this.scrollRead(dir === 'up' ? READ_STEP : -READ_STEP)
+  },
+  scrollRead(delta) {
+    const now = Date.now()
+    if (now - this.lastScrollAt < 180) {
+      return
+    }
+    this.lastScrollAt = now
+    const maxStart = Math.max(0, this.dRows.length - READ_ROWS)
+    const next = Math.max(0, Math.min(maxStart, this.dStart + delta))
+    if (next === this.dStart) {
+      return
+    }
+    // 手动滑动 = 暂不跟随，避免刚滑走就被播放进度拽回去
+    this.dFollow = false
+    this.dStart = next
+    this.sliceRead()
+    this.updateStatus()
+  },
   closeDetail() {
     this.detail = false
-  },
-  dPrev() {
-    if (this.dPage <= 0) {
-      return
-    }
-    this.dPage--
-    this.sliceDetail()
-  },
-  dNext() {
-    if (this.dPage >= this.dPageCount - 1) {
-      return
-    }
-    this.dPage++
-    this.sliceDetail()
-  },
-  sliceDetail() {
-    const start = this.dPage * READ_SIZE
-    this.dView = this.dRows.slice(start, start + READ_SIZE)
+    this.manage = false
+    this.confirmKey = ''
   },
   async loadDemo() {
     await library.seed(demo.demos)
@@ -389,6 +552,8 @@ export default {
   justify-content: space-between;
 }
 .info-text {
+  flex: 1;
+  lines: 1;
   font-size: 10dp;
   line-height: 16dp;
   font-weight: bold;
@@ -406,15 +571,35 @@ export default {
   font-weight: bold;
   color: #4f6074;
 }
-/* 关键：竖排列表必须声明列方向，否则所有行会挤在同一行里 */
-.list {
+.follow-chip {
+  padding-left: 6dp;
+  padding-right: 6dp;
+  border-radius: 8dp;
+  font-size: 9.5dp;
+  line-height: 16dp;
+  font-weight: bold;
+  color: #8fa0b5;
+  background-color: #121b26;
+  text-align: center;
+}
+.follow-on {
+  color: #6ef3c5;
+  background-color: #123b31;
+}
+/* 固定高度的窗口：只放得下 LIST_ROWS 行，多出来的靠滑动换窗口，不整列表渲染 */
+.window {
   width: 100%;
-  flex-direction: column;
+  height: 204dp;
+  flex-grow: 0;
+  flex-shrink: 0;
   margin-top: 2dp;
+  flex-direction: column;
 }
 .row {
   width: 100%;
-  height: 36dp;
+  height: 34dp;
+  flex-grow: 0;
+  flex-shrink: 0;
   flex-direction: row;
   align-items: center;
   border-bottom-width: 1px;
@@ -456,44 +641,19 @@ export default {
 .row-action-danger {
   color: #ff7a7a;
 }
-.pager {
+.scroll-hint {
   width: 100%;
-  height: 24dp;
   flex-grow: 0;
   flex-shrink: 0;
   margin-top: 2dp;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
+  font-size: 9.5dp;
+  line-height: 14dp;
+  text-align: center;
+  color: #33414f;
 }
-.pager-btn {
-  width: 52dp;
-  height: 22dp;
-  border-radius: 11dp;
-  align-items: center;
-  justify-content: center;
-  background-color: #0e151e;
-}
-.pager-off {
-  background-color: #0a1017;
-}
-.pager-text {
-  font-size: 10.5dp;
-  line-height: 18dp;
-  font-weight: bold;
-  color: #b9c6d6;
-}
-.pager-info {
-  font-size: 10.5dp;
-  line-height: 18dp;
-  font-weight: bold;
-  color: #4f6074;
-}
-.lines {
-  width: 100%;
-  flex-grow: 1;
+.read {
+  height: 200dp;
   margin-top: 2dp;
-  flex-direction: column;
 }
 .line {
   lines: 1;
@@ -501,7 +661,30 @@ export default {
   font-size: 13dp;
   line-height: 20dp;
   font-weight: bold;
-  color: #c4cfdd;
+  color: #b9c6d6;
+  text-align: left;
+}
+.line-on {
+  color: #6ef3c5;
+}
+.line-off {
+  color: #8b9bad;
+}
+.read-foot {
+  width: 100%;
+  height: 16dp;
+  flex-grow: 0;
+  flex-shrink: 0;
+  margin-top: 2dp;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+}
+.foot-text {
+  font-size: 9.5dp;
+  line-height: 14dp;
+  font-weight: bold;
+  color: #3d4b5d;
 }
 .loading-box {
   width: 100%;
@@ -509,6 +692,11 @@ export default {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+}
+.spinner {
+  width: 26dp;
+  height: 26dp;
+  margin-bottom: 5dp;
 }
 .loading-text {
   width: 100%;
@@ -518,29 +706,6 @@ export default {
   color: #7b8b9f;
   text-align: center;
 }
-.loading-track {
-  width: 56%;
-  height: 3dp;
-  margin-top: 8dp;
-  border-radius: 2dp;
-  background-color: #141e29;
-}
-.fill {
-  height: 3dp;
-  border-radius: 2dp;
-  background-color: #6ef3c5;
-}
-.fill-w0 { width: 0%; }
-.fill-w10 { width: 10%; }
-.fill-w20 { width: 20%; }
-.fill-w30 { width: 30%; }
-.fill-w40 { width: 40%; }
-.fill-w50 { width: 50%; }
-.fill-w60 { width: 60%; }
-.fill-w70 { width: 70%; }
-.fill-w80 { width: 80%; }
-.fill-w90 { width: 90%; }
-.fill-w100 { width: 100%; }
 .empty {
   flex: 1;
   width: 100%;

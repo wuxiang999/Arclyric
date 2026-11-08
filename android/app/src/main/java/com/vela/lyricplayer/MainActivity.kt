@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.ScrollView
@@ -67,6 +68,18 @@ class MainActivity : Activity() {
         versionChip = findViewById(R.id.versionChip)
 
         versionChip.text = "v" + appVersion()
+
+        // 日志区是嵌在外层 ScrollView 里的内层滚动列表。
+        // 不拦一下的话上下滑动会被外层吃掉，日志永远只能看最新几行、翻不上去。
+        logScroll.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
+                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    view.parent?.requestDisallowInterceptTouchEvent(false)
+            }
+            false
+        }
 
         accessButton.setOnClickListener { openAccessSettings() }
         toggleButton.setOnClickListener { if (PlayerService.running) stopSync() else startSync() }
@@ -317,6 +330,8 @@ class MainActivity : Activity() {
     }
 
     private fun appendLog(line: String) {
+        // 用户翻到上面看历史日志时不要再把他拽回底部
+        val atBottom = !logScroll.canScrollVertically(1)
         logText.append(line)
         logText.append("\n")
         if (logText.length() > 12000) {
@@ -326,6 +341,8 @@ class MainActivity : Activity() {
                 logText.text = value.substring(cut + 1)
             }
         }
-        logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+        if (atBottom) {
+            logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+        }
     }
 }

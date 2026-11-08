@@ -1,5 +1,6 @@
 <script>
 import debug from './common/scripts/debug.js'
+import player from './common/scripts/player-state.js'
 
 try {
   debug.boot()
@@ -11,6 +12,21 @@ export default {
   },
   onShow() {
     debug.mark('app', 'onShow')
+  },
+  // 切后台/退出前把当前歌曲与进度落盘，下次进来才能接着显示和继续播放
+  onHide() {
+    debug.mark('app', 'onHide')
+    try {
+      player.persistNow().catch(function () {})
+    } catch (e) {
+      debug.error('app', 'onHide persist', e)
+    }
+  },
+  onDestroy() {
+    debug.mark('app', 'onDestroy')
+    try {
+      player.persistNow()
+    } catch (e) {}
   },
   onError(err) {
     debug.error('app', 'onError', err)

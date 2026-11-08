@@ -1,24 +1,7 @@
-import java.util.Properties
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
-
-// 签名信息不进仓库：优先取 -P 参数，其次取 android/keystore.properties，
-// 都没有就构建未签名包。参考 keystore.properties.example。
-val keystoreProps = Properties().apply {
-    val f = rootProject.file("keystore.properties")
-    if (f.exists()) f.inputStream().use { load(it) }
-}
-
-fun signingValue(key: String, fallback: String = ""): String =
-    (project.findProperty(key) as String?) ?: keystoreProps.getProperty(key) ?: fallback
-
-val arclyricStore = rootProject.file(signingValue("storeFile", "arclyric.keystore"))
-val hasArclyricSigning = arclyricStore.exists() && signingValue("storePassword").isNotEmpty()
-val builtinStore = rootProject.file("builtin.keystore")
-val hasBuiltinSigning = builtinStore.exists() && signingValue("storePassword").isNotEmpty()
 
 android {
     namespace = "com.vela.lyricplayer"
@@ -28,41 +11,37 @@ android {
         applicationId = "com.vela.lyricplayer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
     }
 
     signingConfigs {
-        if (hasArclyricSigning) {
-            create("arclyric") {
-                storeFile = arclyricStore
-                storePassword = signingValue("storePassword")
-                keyAlias = signingValue("keyAlias", "arclyric")
-                keyPassword = signingValue("keyPassword", signingValue("storePassword"))
-            }
+        create("arclyric") {
+            storeFile = rootProject.file("arclyric.keystore")
+            storePassword = "arclyric"
+            keyAlias = "arclyric"
+            keyPassword = "arclyric"
         }
-        // 和 aiot 内置调试证书（CN=localhost）一致，用于与内置证书签名的调试 RPK 联调。
-        if (hasBuiltinSigning) {
-            create("builtin") {
-                storeFile = builtinStore
-                storePassword = signingValue("storePassword")
-                keyAlias = signingValue("builtinAlias", "builtin")
-                keyPassword = signingValue("builtinPassword", signingValue("storePassword"))
-            }
+        // 与 aiot 内置调试证书（CN=localhost）一致，用于和内置证书签名的调试 RPK 联调
+        create("builtin") {
+            storeFile = rootProject.file("builtin.keystore")
+            storePassword = "arclyric"
+            keyAlias = "builtin"
+            keyPassword = "arclyric"
         }
     }
 
     buildTypes {
         debug {
             signingConfig = if (project.hasProperty("builtinSign")) {
-                signingConfigs.findByName("builtin") ?: signingConfigs.findByName("arclyric")
+                signingConfigs.getByName("builtin")
             } else {
-                signingConfigs.findByName("arclyric")
+                signingConfigs.getByName("arclyric")
             }
         }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.findByName("arclyric")
+            signingConfig = signingConfigs.getByName("arclyric")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

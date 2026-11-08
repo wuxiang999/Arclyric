@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioManager
 import android.media.session.MediaController
 import android.os.Build
 import android.os.Handler
@@ -33,8 +34,10 @@ class PlayerService : Service() {
         const val ACTION_PUSH = "com.vela.lyricplayer.action.PUSH"
         const val ACTION_LIBRARY = "com.vela.lyricplayer.action.LIBRARY"
         const val ACTION_LIBRARY_DELETE = "com.vela.lyricplayer.action.LIBRARY_DELETE"
+        const val ACTION_PUSH_BATCH = "com.vela.lyricplayer.action.PUSH_BATCH"
         private const val EXTRA_FILE = "file"
         private const val EXTRA_KEY = "key"
+        private const val EXTRA_FILES = "files"
 
         private const val CHANNEL_ID = "arclyric_sync"
         private const val NOTIFICATION_ID = 4101
@@ -94,6 +97,21 @@ class PlayerService : Service() {
                 .putExtra(EXTRA_FILE, name)
             context.startService(intent)
         }
+
+        /** 批量推送：服务内部排队一首一首发，不会几首歌词的包互相踩 */
+        fun pushFiles(context: Context, names: List<String>) {
+            if (names.isEmpty()) {
+                return
+            }
+            try {
+                val intent = Intent(context, PlayerService::class.java)
+                    .setAction(ACTION_PUSH_BATCH)
+                    .putStringArrayListExtra(EXTRA_FILES, ArrayList(names))
+                context.startService(intent)
+            } catch (e: Exception) {
+                LogBus.log("批量推送失败：" + (e.message ?: e.toString()))
+            }
+        }
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -118,6 +136,12 @@ class PlayerService : Service() {
     private var pendingAcks = 0
     private var pendingGeneration = 0
     private var pendingId = ""
+    private var pendingKey = ""
+    // 批量推送队列：一次只发一首，发完再取下一首
+    private val pushQueue = ArrayDeque<String>()
+    private var pushBusy = false
+    // 手环在发送超时后会反复握手：限流，否则两边会互相放大成发包风暴
+    private var lastHelloHandledAt = 0L
     private var lastPongAt = 0L
 
     // 词库镜像：手环是唯一真源，这里只负责向它要一份快照
@@ -167,6 +191,10 @@ class PlayerService : Service() {
         when (intent?.action) {
             ACTION_RESEND -> forceResend = true
             ACTION_PUSH -> pushFileToBand(intent.getStringExtra(EXTRA_FILE))
+            ACTION_PUSH_BATCH -> {
+                val names = intent.getStringArrayListExtra(EXTRA_FILES) ?: arrayListOf()
+                pushFilesToBand(names)
+            }
             ACTION_LIBRARY -> {
                 libraryRequested = true
                 libraryRequestTries = 0
@@ -202,8 +230,44 @@ class PlayerService : Service() {
         if (name.isNullOrBlank()) {
             return
         }
+        pushQueue.addLast(name)
+        drainPushQueue()
+    }
+
+    private fun pushFilesToBand(names: List<String>) {
+        names.forEach { name ->
+            if (name.isNotBlank()) {
+                pushQueue.addLast(name)
+            }
+        }
+        LogBus.log("批量推送歌词：${pushQueue.size} 首（排队发送）")
+        drainPushQueue()
+    }
+
+    // 一首一首发：几首歌词的分包同时在线会互相踩，手环那边也分不清是哪一包。
+    private fun drainPushQueue() {
+        if (pushBusy || pushQueue.isEmpty()) {
+            return
+        }
+        pushBusy = true
+        val name = pushQueue.removeFirst()
         // 从歌词库冷启服务时连接还没建立，等 1.2 秒再发，避免第一包丢失
-        handler.postDelayed({ doPushFileToBand(name) }, 1200L)
+        handler.postDelayed({
+            doPushFileToBand(name)
+            handler.postDelayed(pushWait, 400L)
+        }, 1200L)
+    }
+
+    private val pushWait = object : Runnable {
+        override fun run() {
+            // 上一首还在分包发送就继续等，发完再取下一首
+            if (pendingPackets != null) {
+                handler.postDelayed(this, 600L)
+                return
+            }
+            pushBusy = false
+            drainPushQueue()
+        }
     }
 
     private fun doPushFileToBand(name: String) {
@@ -252,7 +316,14 @@ class PlayerService : Service() {
         if (forceResend) {
             forceResend = false
             sendState(playing)
-            sendLyrics(playing.title, playing.artist, true, playing.duration)
+            // 只有「还没送达」或「距离上次推送超过 15 秒」才重发歌词：
+            // 以前每次握手都无条件重发整首，手环一抖动就是十几包连着灌。
+            val key = playing.title + "|" + playing.artist
+            val missing = !lyricsDelivered || lastLyricsKey != key
+            val stale = SystemClock.elapsedRealtime() - lastPushAt > 15000L
+            if (missing || stale) {
+                sendLyrics(playing.title, playing.artist, true, playing.duration)
+            }
             lastSignature = signature
             lastStateAt = SystemClock.elapsedRealtime()
             lastTitle = playing.title
@@ -260,8 +331,9 @@ class PlayerService : Service() {
             return
         }
         val now = SystemClock.elapsedRealtime()
-        // 只在变化时发 + 每 10 秒兜底重发一次：手环侧即使漏掉一两条也能自愈
-        if (signature != lastSignature || now - lastStateAt > 10000L) {
+        // 只在变化时发 + 每 2 秒兜底重发一次：手环侧即使漏掉一两条也能自愈。
+        // 之前是 10 秒，切歌时丢一包就要等很久，表现就是「停在上一首和结尾秒数」。
+        if (signature != lastSignature || now - lastStateAt > 2000L) {
             lastSignature = signature
             lastStateAt = now
             sendState(playing)
@@ -272,6 +344,9 @@ class PlayerService : Service() {
             lastTitle = playing.title
             lastArtist = playing.artist
             lyricsRetry = 0
+            // 切歌这一下最容易丢包：0.8s / 2.2s 各补发一次状态
+            handler.postDelayed({ sendState(playing) }, 800L)
+            handler.postDelayed({ sendState(playing) }, 2200L)
             sendLyrics(playing.title, playing.artist, true, playing.duration)
         } else if (!lyricsDelivered && pendingPackets == null && lastPushTitle == playing.title &&
             lastPushText.isNotEmpty() && lyricsRetry < 2 && now - lastPushAt > 12000L
@@ -343,9 +418,37 @@ class PlayerService : Service() {
                 playing.duration,
                 playing.position,
                 playing.playing,
-                playing.source
+                playing.source,
+                musicVolumePercent()
             )
         )
+    }
+
+    /** 系统音乐音量换算成 0-100；拿不到就回 -1，手环端会沿用上次的值 */
+    private fun musicVolumePercent(): Int {
+        return try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val cur = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            (cur * 100 / max).coerceIn(0, 100)
+        } catch (e: Exception) {
+            -1
+        }
+    }
+
+    /** 手环来的音量是 0-100 的目标值，这里换算成系统档位 */
+    private fun applyVolume(percent: Long) {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val target = ((percent.coerceIn(0L, 100L) * max) / 100L).toInt().coerceIn(0, max)
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, target, AudioManager.FLAG_SHOW_UI)
+            LogBus.log("手环控制：音量 $target/$max")
+            forceResend = true
+            poll()
+        } catch (e: Exception) {
+            LogBus.log("调整音量失败：" + (e.message ?: e.toString()))
+        }
     }
 
     private fun sendLyrics(title: String, artist: String, force: Boolean, durationMs: Long = 0L) {
@@ -357,6 +460,13 @@ class PlayerService : Service() {
             return
         }
         lastLyricsKey = key
+
+        // 同一首歌正在分包发送时不再重开一轮：之前手环重复握手会触发
+        // 12 包 × N 轮的重发，通信缓冲被灌满，手环侧发送超时又反过来触发握手。
+        if (pendingPackets != null && key == pendingKey) {
+            LogBus.log("歌词正在发送，跳过重复请求：$title")
+            return
+        }
 
         val local = repository.find(title, artist)
         if (!local.isNullOrBlank()) {
@@ -416,6 +526,7 @@ class PlayerService : Service() {
         pendingIndex = 0
         pendingAcks = 0
         pendingId = packetId(packets)
+        pendingKey = title + "|" + artist
         LogBus.log("开始发送$source 歌词：$title · ${trimmed.length} 字 / ${packets.size} 包")
         SyncStatus.update(title, artist, "歌词：发送中 0/${packets.size} 包")
         sendPendingPacket()
@@ -483,6 +594,7 @@ class PlayerService : Service() {
         pendingIndex = 0
         pendingAcks = 0
         pendingId = ""
+        pendingKey = ""
     }
 
     private fun trimLyrics(text: String, limit: Int): String {
@@ -537,12 +649,23 @@ class PlayerService : Service() {
                 }
             }
             "hello" -> {
+                // 手环侧发送超时后会把 hello 当重连信号反复发。
+                // 这里必须限流：8 秒内重复的 hello 直接丢掉，否则每来一条就重推一整首歌词，
+                // 通道被灌满 -> 手环再超时 -> 再发 hello，自己把自己放大成发包风暴。
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastHelloHandledAt < 8000L) {
+                    return
+                }
+                lastHelloHandledAt = now
                 LogBus.log("手环已连上，1.5 秒后推送状态与歌词")
+                // 词库请求不重置 lastLibraryRequestAt：之前一重置就等于把
+                // 「刚刚请求过」的节流记录抹掉，请求变成永不停止。
                 handler.postDelayed({
-                    libraryRequested = true
-                    libraryRequestTries = 0
-                    lastLibraryRequestAt = 0L
-                    requestBandLibrary()
+                    if (!libraryRequested && SystemClock.elapsedRealtime() - lastLibraryRequestAt > 8000L) {
+                        libraryRequested = true
+                        libraryRequestTries = 0
+                        requestBandLibrary()
+                    }
                 }, 2500L)
                 // 握手刚建立时通信服务还在抖动，立刻灌数据容易把穿戴服务带崩
                 handler.postDelayed({
@@ -574,6 +697,7 @@ class PlayerService : Service() {
                         poll()
                     }
                     "lyrics" -> sendLyrics(lastTitle, lastArtist, true)
+                    "volume" -> applyVolume(value)
                     "play", "pause", "toggle", "next", "prev", "seek" -> {
                         if (!MediaWatcher.hasAccess(this)) {
                             LogBus.log("缺少通知使用权，无法控制播放")

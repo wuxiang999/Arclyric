@@ -6,9 +6,6 @@
         <text class="status-text">{{statusText}}</text>
       </div>
       <div class="tools">
-        <div class="tool" @click="onFetchLyrics">
-          <image class="tool-icon" src="/common/images/ic_add_lyric.png"></image>
-        </div>
         <div class="tool" @click="openBook">
           <image class="tool-icon" src="/common/images/ic_book.png"></image>
         </div>
@@ -18,18 +15,26 @@
       </div>
     </div>
 
-    <div class="meta" @click="openLyrics">
-      <text class="title">{{title}}</text>
-      <text class="artist">{{artist}}</text>
+    <div class="meta">
+      <div class="meta-text">
+        <text class="title" @click="openLyrics">{{title}}</text>
+        <text class="artist" @click="openLyrics">{{artist}}</text>
+      </div>
+      <div class="add-btn" @click="addToBook">
+        <image class="add-icon" src="/common/images/ic_book_add.png"></image>
+      </div>
     </div>
 
     <div class="lyric" @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @swipe="onSwipe" @click="onLyricTap">
       <block if="{{loading}}">
-        <text class="loading-text">{{loadingText}}{{dots}}</text>
-        <div class="loading-track">
-          <div class="fill fill-w{{transferActive ? transferLevel : loadWidth}}"></div>
-        </div>
-        <text class="loading-sub" if="{{transferActive}}">已收到 {{transferReceived}}/{{transferTotal}} 包</text>
+        <image class="spinner" src="/common/images/spin{{spinFrame}}.png"></image>
+        <text class="loading-text">{{loadingText}}</text>
+        <block if="{{transferActive}}">
+          <div class="loading-track">
+            <div class="fill fill-w{{transferLevel}}"></div>
+          </div>
+          <text class="loading-sub">已收到 {{transferReceived}}/{{transferTotal}} 包</text>
+        </block>
       </block>
       <block if="{{!loading}}">
         <!-- 手势与点击只绑在外层 .lyric：行内再绑一次会冒泡成两次，
@@ -39,8 +44,22 @@
       </block>
     </div>
 
+    <div class="vol-row">
+      <div class="vol-btn" @click="volDown">
+        <image class="vol-icon" src="/common/images/ic_vol_down.png"></image>
+      </div>
+      <div class="vol-track">
+        <div class="vol-fill vol-w{{volLevel}}"></div>
+      </div>
+      <div class="vol-btn" @click="volUp">
+        <image class="vol-icon" src="/common/images/ic_vol_up.png"></image>
+      </div>
+      <text class="vol-text">{{volume}}%</text>
+    </div>
+
     <block if="{{showProgress}}">
-      <div class="progress">
+      <!-- 进度条整条都可拖动：按下即预览，松手才真正 seek，避免拖动时狂发指令 -->
+      <div class="progress" @touchstart="onBarStart" @touchmove="onBarMove" @touchend="onBarEnd">
         <div class="track">
           <div class="fill fill-w{{barLevel}}"></div>
         </div>
@@ -61,15 +80,6 @@
       </div>
       <div class="ctrl ctrl-side" @click="onNext">
         <image class="ctrl-icon" src="/common/images/ic_next.png"></image>
-      </div>
-    </div>
-
-    <div class="seek-row">
-      <div class="seek" @click="back10">
-        <image class="seek-icon" src="/common/images/ic_rewind.png"></image>
-      </div>
-      <div class="seek" @click="forward10">
-        <image class="seek-icon" src="/common/images/ic_forward.png"></image>
       </div>
     </div>
 
@@ -95,8 +105,9 @@ const SIZE_KEY = ['s', 'm', 'l']
 // 每行实际占高 = line-height + 上下各 1dp 内边距，和 CSS 严格对应
 const ON_H = [22, 25, 27]
 const OFF_H = [18, 20, 22]
-// 歌词区可用高度：显示进度条时 110dp，隐藏时多出 24dp
-const LYRIC_BUDGET = [110, 134]
+// 歌词区可用高度：删掉 ±10s、加音量行后重算（264 - 固定 155 - 上边距 2 ≈ 107）
+// 显示进度条时 104dp（留 3dp 余量），隐藏进度条时多出 36dp
+const LYRIC_BUDGET = [104, 140]
 const HINT_H = 16
 
 function unitsFor(size) {
@@ -114,6 +125,8 @@ export default {
     connected: false,
     mock: true,
     barLevel: 0,
+    volume: 70,
+    volLevel: 70,
     statusText: '演示模式',
     rows: [{ text: '等待歌词', cls: 'on-m' }],
     browsing: false,
@@ -124,10 +137,7 @@ export default {
     showProgress: true,
     loading: true,
     loadingText: '正在准备',
-    dots: '',
-    loadWidth: 30,
-    dotStep: 0,
-    loadStep: 0,
+    spinFrame: 0,
     transferActive: false,
     transferReceived: 0,
     transferTotal: 0,
@@ -145,9 +155,13 @@ export default {
     this.swipedAt = 0
     this.lastBrowseAt = 0
     this.lastOpenAt = 0
+    this.lastAddAt = 0
     this.browseIdleMs = 6000
     this.browseTimer = null
     this.loadTimer = null
+    this.durationMs = 0
+    this.barDrag = false
+    this.barMs = -1
     // Vela 没有 CSS 动画，加载动效只能靠定时器换帧；加载结束就停，别常驻
     this.startLoadTimer()
     try {
@@ -176,21 +190,17 @@ export default {
     if (this.loadTimer) {
       return
     }
+    // Vela 没有 CSS 动画：0-7 帧圆形图片轮换就是转圈加载（约 7 帧/秒，省电）
     this.loadTimer = setInterval(() => {
-      const step = (this.dotStep + 1) % 4
-      this.dotStep = step
-      this.dots = step === 0 ? '' : step === 1 ? '·' : step === 2 ? '··' : '···'
-      const seq = [20, 40, 60, 80, 60, 40]
-      this.loadStep = (this.loadStep + 1) % seq.length
-      this.loadWidth = seq[this.loadStep]
-    }, 320)
+      this.spinFrame = (this.spinFrame + 1) % 8
+    }, 130)
   },
   stopLoadTimer() {
     if (this.loadTimer) {
       clearInterval(this.loadTimer)
       this.loadTimer = null
     }
-    this.dots = ''
+    this.spinFrame = 0
   },
   onDestroy() {
     if (this.unsubscribe) {
@@ -216,11 +226,15 @@ export default {
   apply(view, reason) {
     // 每秒的 tick 只更新进度，不重建歌词行：手环内存小，重建会掉帧
     if (reason === 'tick') {
+      this.playing = view.playing
+      // 手指按在进度条上时不跟播放进度抢，否则拖动会被每秒的刷新拽回去
+      if (this.barDrag) {
+        return
+      }
       this.percent = view.percent
       this.barLevel = Math.round((Number(view.percent) || 0) / 10) * 10
       this.positionText = view.positionText
       this.durationText = view.durationText
-      this.playing = view.playing
       return
     }
     this.title = this.shorten(view.title || '未在播放', 8)
@@ -229,6 +243,9 @@ export default {
     this.barLevel = Math.round((Number(view.percent) || 0) / 10) * 10
     this.positionText = view.positionText
     this.durationText = view.durationText
+    this.durationMs = Number(view.duration) || 0
+    this.volume = Math.max(0, Math.min(100, Math.round(Number(view.volume) || 0)))
+    this.volLevel = Math.round(this.volume / 10) * 10
     this.playing = view.playing
     this.connected = view.connected
     this.mock = view.mock
@@ -470,25 +487,85 @@ export default {
     this.vibrate()
     player.next().catch(() => {})
   },
-  back10() {
+  volDown() {
     this.vibrate()
-    player.seekTo(player.getPosition() - 10000).catch(() => {})
+    player.volumeStep(-10).catch(() => {})
   },
-  forward10() {
+  volUp() {
     this.vibrate()
-    player.seekTo(player.getPosition() + 10000).catch(() => {})
+    player.volumeStep(10).catch(() => {})
   },
-  onFetchLyrics() {
+  // 进度条整条可拖：按下先本地预览，松手才发 seek，避免拖动时一路狂发指令
+  onBarStart(evt) {
+    if (!this.durationMs) {
+      return
+    }
+    this.barDrag = true
+    this.barTrack(evt, 'start')
+  },
+  onBarMove(evt) {
+    if (!this.barDrag) {
+      return
+    }
+    this.barTrack(evt, 'move')
+  },
+  onBarEnd(evt) {
+    if (!this.barDrag) {
+      return
+    }
+    this.barTrack(evt, 'end')
+    this.barDrag = false
+    const ms = this.barMs
+    if (ms >= 0 && this.durationMs > 0) {
+      this.vibrate()
+      player.seekTo(ms).catch(() => {})
+    }
+    this.barMs = -1
+  },
+  barTrack(evt, phase) {
+    const point = this.pointOf(evt, phase)
+    if (!point) {
+      return
+    }
+    const x = Number(point.clientX) || 0
+    // 页面左右各 11dp 内边距，进度条宽 170dp
+    const ratio = Math.max(0, Math.min(1, (x - 11) / 170))
+    const ms = Math.round(ratio * (this.durationMs || 0))
+    this.barMs = ms
+    this.percent = Math.round(ratio * 100)
+    this.barLevel = Math.round(this.percent / 10) * 10
+    this.positionText = lrc.formatTime(ms)
+  },
+  // 手动「加入歌词本」：默认不再每首歌自动入库，想存哪首点这里
+  addToBook() {
     this.vibrate()
-    player.requestLyrics().catch(() => {})
-    try {
-      prompt.showToast({ message: '已请求手机匹配歌词', duration: 1200 })
-    } catch (e) {}
+    this.lastAddAt = Date.now()
+    const view = player.snapshot()
+    if (!view.hasLyrics) {
+      try {
+        prompt.showToast({ message: '还没有歌词，已请求手机推送', duration: 1500 })
+      } catch (e) {}
+      player.requestLyrics().catch(() => {})
+      return
+    }
+    player.saveCurrentLyrics().then(function (key) {
+      try {
+        prompt.showToast({ message: key ? '已加入歌词本' : '加入失败', duration: 1200 })
+      } catch (e) {}
+    }).catch(function () {
+      try {
+        prompt.showToast({ message: '加入失败', duration: 1200 })
+      } catch (e) {}
+    })
   },
   openLyrics() {
     // 外层容器和歌词行都可能触发 click，600ms 内只跳一次，避免压两层歌词页
     const now = Date.now()
     if (now - (this.lastOpenAt || 0) < 600) {
+      return
+    }
+    // 点「加入歌词本」时事件若冒泡上来，不能顺手把页面推走
+    if (now - (this.lastAddAt || 0) < 500) {
       return
     }
     this.lastOpenAt = now
@@ -567,27 +644,47 @@ export default {
   flex-grow: 0;
   flex-shrink: 0;
   width: 100%;
+  height: 34dp;
   margin-top: 2dp;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
+}
+.meta-text {
+  flex: 1;
+  flex-direction: column;
 }
 .title {
   lines: 1;
   width: 100%;
-  font-size: 19dp;
-  line-height: 26dp;
+  font-size: 15dp;
+  line-height: 20dp;
   font-weight: bold;
   color: #eef4fb;
-  text-align: center;
+  text-align: left;
+}
+/* 加入歌词本：放在歌名右侧，一直是可见的图标按钮，不用先滑到某处才找得到 */
+.add-btn {
+  width: 24dp;
+  height: 22dp;
+  border-radius: 11dp;
+  align-items: center;
+  justify-content: center;
+  background-color: #123b31;
+  border-width: 1px;
+  border-color: #6ef3c5;
+}
+.add-icon {
+  width: 15dp;
+  height: 15dp;
 }
 .artist {
   lines: 1;
   width: 100%;
-  font-size: 11.5dp;
-  line-height: 16dp;
+  font-size: 10.5dp;
+  line-height: 14dp;
   font-weight: bold;
-  color: #8fa0b5;
-  text-align: center;
+  color: #6b7f96;
+  text-align: left;
 }
 .lyric {
   flex: 1;
@@ -633,6 +730,11 @@ export default {
   line-height: 25dp;
   color: #6ef3c5;
 }
+.spinner {
+  width: 26dp;
+  height: 26dp;
+  margin-bottom: 5dp;
+}
 .loading-text {
   width: 100%;
   font-size: 12.5dp;
@@ -671,7 +773,7 @@ export default {
   flex-shrink: 0;
   width: 100%;
   margin-top: 2dp;
-  height: 6dp;
+  height: 18dp;
   justify-content: center;
 }
 .track {
@@ -771,25 +873,57 @@ export default {
   width: 26dp;
   height: 26dp;
 }
-.seek-row {
+.vol-row {
   flex-grow: 0;
   flex-shrink: 0;
   width: 100%;
-  margin-top: 3dp;
   height: 24dp;
+  margin-top: 2dp;
   flex-direction: row;
-  justify-content: space-between;
+  align-items: center;
 }
-.seek {
-  width: 48%;
+.vol-btn {
+  width: 24dp;
   height: 24dp;
   border-radius: 12dp;
   align-items: center;
   justify-content: center;
   background-color: #0b121a;
 }
-.seek-icon {
+.vol-icon {
   width: 15dp;
   height: 15dp;
+}
+.vol-track {
+  flex: 1;
+  height: 4dp;
+  margin-left: 6dp;
+  margin-right: 6dp;
+  border-radius: 2dp;
+  background-color: #141e29;
+}
+.vol-fill {
+  height: 4dp;
+  border-radius: 2dp;
+  background-color: #4a7ea8;
+}
+.vol-w0 { width: 0%; }
+.vol-w10 { width: 10%; }
+.vol-w20 { width: 20%; }
+.vol-w30 { width: 30%; }
+.vol-w40 { width: 40%; }
+.vol-w50 { width: 50%; }
+.vol-w60 { width: 60%; }
+.vol-w70 { width: 70%; }
+.vol-w80 { width: 80%; }
+.vol-w90 { width: 90%; }
+.vol-w100 { width: 100%; }
+.vol-text {
+  width: 30dp;
+  font-size: 9.5dp;
+  line-height: 14dp;
+  font-weight: bold;
+  color: #7b8b9f;
+  text-align: right;
 }
 </style>

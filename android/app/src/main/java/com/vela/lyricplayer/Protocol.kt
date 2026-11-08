@@ -24,7 +24,8 @@ object Protocol {
         duration: Long,
         position: Long,
         playing: Boolean,
-        source: String
+        source: String,
+        volume: Int = -1
     ): JSONObject {
         val payload = JSONObject()
             .put("title", title)
@@ -34,6 +35,9 @@ object Protocol {
             .put("position", position)
             .put("playing", playing)
             .put("source", source)
+        if (volume >= 0) {
+            payload.put("volume", volume)
+        }
         return base("state").put("payload", payload)
     }
 

@@ -9,6 +9,23 @@ import debug from './debug.js'
 // 手环 JS 堆很小：单曲歌词超过这个长度直接截断，避免解析/渲染把内存打爆
 const MAX_LYRICS = 12000
 
+// 歌名兜底：词库文件名就是「歌名 - 歌手.lrc」。
+// 手机上抓不到媒体元数据时，靠这个文件名的前半段也能把歌名显示出来。
+function keyLabel(key) {
+  const base = String(key || '').replace(/\.lrc$/i, '').trim()
+  if (!base) {
+    return { title: '', artist: '' }
+  }
+  const index = base.indexOf(' - ')
+  if (index > 0) {
+    return {
+      title: base.slice(0, index).trim(),
+      artist: base.slice(index + 3).trim()
+    }
+  }
+  return { title: base, artist: '' }
+}
+
 const state = {
   ready: false,
   connected: false,
@@ -25,13 +42,14 @@ const state = {
   lyricIndex: -1,
   offsetMs: 0,
   follow: true,
-  autoSave: true,
+  autoSave: false,
   fontSize: 1,
   swipeStep: 1,
   vibrate: true,
   browseIdle: 6,
   offsetStep: 500,
   showProgress: true,
+  volume: 70,
   currentKey: '',
   currentSong: '',
   lastError: '',
@@ -58,8 +76,68 @@ function resetTransfer() {
 let lyricsToken = 0
 let lastPingAt = 0
 let lastPingLogAt = 0
+// 最后一次收到手机 STATE 的时间：太久没更新就主动要一次，防止停在上一首
+let lastStateAt = 0
+let lastWatchdogAt = 0
 // 上一次已知的连接状态，用于只在「断开 -> 连上」时发握手
 let linkUp = false
+
+// ---------- 退出恢复 ----------
+// 退出、断开、切后台都会把「当前歌曲 + 进度」写进 lyric.last；
+// 下次进来自动恢复标题、时长、进度和本地歌词，可以直接接着播。
+const LAST_KEY = 'lyric.last'
+let persistTimer = null
+let lastPersistAt = 0
+
+function lastPayload() {
+  return JSON.stringify({
+    v: 1,
+    title: state.title || '',
+    artist: state.artist || '',
+    album: state.album || '',
+    duration: Math.round(state.duration || 0),
+    position: Math.round(getPosition()),
+    playing: !!state.playing,
+    mock: !!state.mock,
+    mockIndex: mockIndex,
+    mockPosition: Math.round(mockPosition),
+    key: state.currentKey || '',
+    volume: Math.round(state.volume),
+    at: Date.now()
+  })
+}
+
+async function persistNow() {
+  if (!state.ready) {
+    return false
+  }
+  if (persistTimer) {
+    clearTimeout(persistTimer)
+    persistTimer = null
+  }
+  lastPersistAt = Date.now()
+  try {
+    return await store.save('last', lastPayload())
+  } catch (e) {
+    debug.error('state', 'persistNow', e)
+    return false
+  }
+}
+
+// delay 不传时等 1.2s 合并连续变化；传 0 表示尽快写但也不阻塞当前流程
+function persistSoon(delay) {
+  if (!state.ready) {
+    return
+  }
+  if (persistTimer) {
+    return
+  }
+  const wait = typeof delay === 'number' ? Math.max(0, delay) : 1200
+  persistTimer = setTimeout(function () {
+    persistTimer = null
+    persistNow()
+  }, wait)
+}
 
 function startTimer() {
   if (timer) {
@@ -133,8 +211,8 @@ function snapshot() {
     connected: state.connected,
     mock: state.mock,
     playing: state.playing,
-    title: state.title,
-    artist: state.artist,
+    title: state.title || keyLabel(state.currentKey).title,
+    artist: state.artist || keyLabel(state.currentKey).artist,
     album: state.album,
     duration: duration,
     position: position,
@@ -155,6 +233,8 @@ function snapshot() {
     browseIdle: state.browseIdle,
     offsetStep: state.offsetStep,
     showProgress: state.showProgress,
+    volume: Math.max(0, Math.min(100, Math.round(state.volume))),
+    volumeLevel: Math.max(0, Math.min(100, Math.round(state.volume / 10) * 10)),
     currentKey: state.currentKey,
     transferActive: transfer.id !== '' && transfer.received < transfer.total,
     transferReceived: transfer.received,
@@ -191,6 +271,13 @@ async function loadLyricsFor(title, artist, force) {
       if (token !== lyricsToken) {
         return
       }
+      // 手机没给歌名/歌手时，用词库文件名补上（文件名就是「歌名 - 歌手」）
+      if (!state.title) {
+        state.title = item.title || ''
+      }
+      if (!state.artist) {
+        state.artist = item.artist || ''
+      }
       setLyricsText(text, title || item.title, artist || item.artist, item.key)
       debug.mark('lyrics', '本地命中 ' + (item.title || title))
     } else {
@@ -214,13 +301,28 @@ async function handleState(payload) {
   state.connected = true
   state.source = p.source || 'phone'
   state.playing = !!p.playing
-  state.title = p.title || ''
-  state.artist = p.artist || ''
-  state.album = p.album || ''
+  // 手机偶尔拿不到标题（部分播放器元数据为空）：保留上一首标题，
+  // 实在没有就用本地歌词文件名兜底，别让界面变成空白或旧信息
+  if (p.title) {
+    state.title = p.title
+    state.artist = p.artist || ''
+  }
+  if (p.album) {
+    state.album = p.album
+  }
   state.duration = Math.max(0, Number(p.duration) || 0)
   state.position = Math.max(0, (Number(p.position) || 0) + (p.playing ? 120 : 0))
   state.anchorAt = Date.now()
   state.lastError = ''
+  lastStateAt = Date.now()
+  if (p.volume !== undefined && p.volume !== null) {
+    state.volume = clampInt(p.volume, 0, 100, state.volume)
+  }
+  if (!state.title && state.currentKey) {
+    const label = keyLabel(state.currentKey)
+    state.title = label.title
+    state.artist = state.artist || label.artist
+  }
   const current = state.title + '|' + state.artist
   // 以前这里还有 `|| !state.lyrics.lines.length`，导致没有歌词的歌每秒都去扫一遍词库，
   // 同时把 lyricsToken 不断自增，正在加载的歌词永远被判定为过期 -> 歌词始终不显示。
@@ -235,6 +337,7 @@ async function handleState(payload) {
   }
   state.lyricIndex = computeIndex()
   emit('state')
+  persistSoon(1500)
 }
 
 async function handleLyrics(payload) {
@@ -372,8 +475,14 @@ function handleMessage(msg) {
     return
   }
   if (msg.type === protocol.TYPES.HELLO) {
-    requestSync()
-    reportLibraryLater()
+    // 手机重连后会主动要状态；词库不在这里上报 ——
+    // 以前每条 hello 都触发一次词库上报，手机回的 hello 和手环的词库包来回叠加，
+    // 通道一直满着，最后就是两边一起超时。词库只在真的写入了新歌时上报。
+    const now = Date.now()
+    if (now - lastHelloAt > 5000) {
+      lastHelloAt = now
+      requestSync()
+    }
     return
   }
   if (msg.type === protocol.TYPES.LIBRARY_REQUEST) {
@@ -407,6 +516,9 @@ function applyMock(index, position) {
   state.currentSong = track.title + '|' + track.artist
   state.lyricIndex = computeIndex()
   emit('state')
+  if (state.ready) {
+    persistSoon(800)
+  }
 }
 
 function mockAction(action, value) {
@@ -444,6 +556,7 @@ function mockAction(action, value) {
   }
   state.lyricIndex = computeIndex()
   emit('state')
+  persistSoon(800)
 }
 
 function command(action, value) {
@@ -453,6 +566,8 @@ function command(action, value) {
   }
   return transport.send(protocol.command(action, value)).then(function (ok) {
     debug.mark('cmd', action + ' 已发送')
+    // 暂停/拖动/切歌都由手机回 STATE 确认，但先落一次盘，避免回包丢了就丢进度
+    persistSoon(800)
     return ok
   }).catch(function (err) {
     const message = err && err.message ? err.message : String(err)
@@ -467,7 +582,32 @@ function requestSync() {
   return command('sync')
 }
 
-function requestLyrics() {
+// 请求手机重推当前歌曲的歌词。
+// 关键：已经拿到这首歌的歌词就不再要第二次 —— 之前播放页要一次、点开歌词页又要一次，
+// 手机上就会把同一份歌词分片发两遍。force 只在用户手动「重试」时传。
+let lyricsRequestAt = 0
+let lyricsRequestKey = ''
+function requestLyrics(force) {
+  if (state.mock) {
+    return Promise.resolve(false)
+  }
+  const key = state.title + '|' + state.artist
+  const now = Date.now()
+  if (force) {
+    // 手动重试也限一下：5 秒内连点不会连着发请求
+    if (now - lyricsRequestAt < 5000) {
+      return Promise.resolve(false)
+    }
+  } else {
+    if (state.lyrics.lines.length && state.currentSong === key) {
+      return Promise.resolve(false)
+    }
+    if (lyricsRequestKey === key && now - lyricsRequestAt < 15000) {
+      return Promise.resolve(false)
+    }
+  }
+  lyricsRequestKey = key
+  lyricsRequestAt = now
   return command('lyrics')
 }
 
@@ -582,12 +722,27 @@ function setShowProgress(enabled) {
   emit('settings')
 }
 
+// 音量：手环只发 0-100 的目标值，手机那边换算成系统音乐音量
+function setVolume(value) {
+  const next = clampInt(value, 0, 100, state.volume)
+  state.volume = next
+  emit('settings')
+  if (state.mock || !state.connected) {
+    return Promise.resolve(true)
+  }
+  return command('volume', next)
+}
+
+function volumeStep(delta) {
+  return setVolume(state.volume + (Number(delta) || 0))
+}
+
 // 恢复默认设置：只还原播放/显示偏好，不动演示模式与当前连接，
 // 避免用户点一下就被切回演示曲目。
 function resetSettings() {
   const d = store.DEFAULTS
   state.follow = d.follow !== false
-  state.autoSave = d.autoSave !== false
+  state.autoSave = !!d.autoSave
   state.vibrate = d.vibrate !== false
   state.fontSize = clampInt(d.fontSize, 0, 2, 1)
   state.swipeStep = clampInt(d.swipeStep, 1, 3, 1)
@@ -629,10 +784,26 @@ function handleStatus(status) {
   }
   // 只在「断开 -> 连上」这一下打日志、发握手；以前每次状态回调都发，
   // 重连时会连着灌好几条消息，正是重启的触发点。
+  // 断开的这一下立刻落盘：等 1.2s 可能已经被系统杀掉了，进度就丢了
+  if (was && !linkUp) {
+    linkDownAt = Date.now()
+    debug.mark('link', '设备通信断开，保存当前进度')
+    persistNow()
+  }
   if (!linkUp || was) {
     emit('status')
     return
   }
+  // 真重连要满足两条：断开够久（>=1.5s）或从来没连过，并且不在 hello 冷却里。
+  // 收发超时抖动会连着上报「已接通」，不能每次都当成新连接。
+  const now = Date.now()
+  const realReconnect = !lastHelloAt || (linkDownAt && now - linkDownAt >= 1500)
+  if (!realReconnect || now - lastHelloAt < HELLO_GAP_MS) {
+    emit('status')
+    return
+  }
+  lastHelloAt = now
+  linkDownAt = 0
   debug.mark('link', '设备通信已接通 apkStatus=' +
     (status.apkStatus === undefined ? '?' : status.apkStatus))
   transport.send(protocol.envelope(protocol.TYPES.HELLO, {
@@ -652,6 +823,22 @@ function tick() {
     emit('line')
   }
   emit('tick')
+  // 手机切歌手环没收到新状态时，会永远停在上一首和结尾秒数。
+  // 播到尾 + 状态超过 20 秒没更新，都主动要一次，5 秒最多一次避免刷屏。
+  if (!state.mock && state.connected) {
+    const now = Date.now()
+    const atEnd = state.playing && state.duration > 0 && getPosition() >= state.duration - 1200
+    const stale = lastStateAt > 0 && now - lastStateAt > 20000
+    if ((atEnd || stale) && now - lastWatchdogAt > 5000) {
+      lastWatchdogAt = now
+      debug.mark('state', atEnd ? '播放到结尾，请求同步' : '状态超时，请求同步')
+      requestSync().catch(function () {})
+    }
+  }
+  // 播放中每 15 秒落一次盘：直接断电/被杀也能恢复到差不多的地方
+  if (Date.now() - lastPersistAt > 15000) {
+    persistSoon(0)
+  }
 }
 
 async function init() {
@@ -699,9 +886,43 @@ async function init() {
     } catch (e) {
       debug.error('init', 'transport', e)
     }
+    let last = null
     try {
+      const raw = await store.get(LAST_KEY)
+      if (raw) {
+        last = JSON.parse(raw)
+      }
+    } catch (e) {
+      debug.error('init', 'restore.last', e)
+      last = null
+    }
+    try {
+      if (last && last.volume !== undefined) {
+        state.volume = clampInt(last.volume, 0, 100, state.volume)
+      }
       if (state.mock) {
-        applyMock(0, 0)
+        // 演示模式：接着上次那首、那个位置继续
+        const idx = last && last.mock ? Number(last.mockIndex) || 0 : 0
+        const pos = last && last.mock ? Math.max(0, Number(last.mockPosition) || 0) : 0
+        mockPlaying = last && last.mock ? last.playing !== false : true
+        applyMock(idx, pos)
+      } else if (last && (last.title || last.key)) {
+        // 真实歌曲：恢复标题、时长和退出时的进度，歌词从本地词库取。
+        // 标题为空时用歌词文件名兜底（文件名就是「歌名 - 歌手」）。
+        const label = keyLabel(last.key)
+        state.title = last.title || label.title || ''
+        state.artist = last.artist || label.artist || ''
+        state.album = last.album || ''
+        state.duration = Math.max(0, Number(last.duration) || 0)
+        state.position = Math.max(0, Number(last.position) || 0)
+        // 恢复成暂停：断开手机时进度条不能自己往前跑，但一按播放就接着放
+        state.playing = false
+        state.anchorAt = Date.now()
+        state.source = 'restore'
+        state.lastError = ''
+        state.currentSong = ''
+        await loadLyricsFor(state.title, state.artist, true)
+        debug.mark('init', '恢复上次：' + state.title + ' @' + state.position)
       } else {
         const first = await library.list()
         if (first.length) {
@@ -743,6 +964,11 @@ const LIBRARY_GAP_MS = 90
 let libraryTimer = null
 let libraryBusy = false
 let libraryDirty = false
+// 握手冷却：通信层一旦抖动就会连着回调「已接通」，
+// 以前每次回调都发一条 hello，手机收到就重推一整首歌词，来回放大成发包风暴。
+let lastHelloAt = 0
+let linkDownAt = 0
+const HELLO_GAP_MS = 20000
 
 function wait(ms) {
   return new Promise(function (resolve) {
@@ -862,6 +1088,7 @@ function setActive(active) {
 
 function dispose() {
   stopTimer()
+  persistNow()
   listeners = []
 }
 
@@ -897,8 +1124,12 @@ export default {
   setBrowseIdle: setBrowseIdle,
   setOffsetStep: setOffsetStep,
   setShowProgress: setShowProgress,
+  setVolume: setVolume,
+  volumeStep: volumeStep,
   resetSettings: resetSettings,
   saveCurrentLyrics: saveCurrentLyrics,
   loadLyricsFor: loadLyricsFor,
-  sendLibrary: sendLibrary
+  sendLibrary: sendLibrary,
+  persistNow: persistNow,
+  persistSoon: persistSoon
 }

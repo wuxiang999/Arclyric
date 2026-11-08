@@ -24,19 +24,20 @@
     </div>
 
     <div class="loading" if="{{loading}}">
-      <text class="loading-text">{{loadingText}}{{dots}}</text>
-      <div class="loading-track">
-        <div class="fill fill-w{{transferActive ? transferLevel : loadWidth}}"></div>
+      <image class="spinner" src="/common/images/spin{{spinFrame}}.png"></image>
+      <text class="loading-text">{{loadingText}}</text>
+      <div class="loading-track" if="{{transferActive}}">
+        <div class="fill fill-w{{transferLevel}}"></div>
       </div>
       <text class="loading-sub" if="{{transferActive}}">已收到 {{transferReceived}}/{{transferTotal}} 包</text>
     </div>
 
-    <div class="empty" if="{{!hasLyrics && !loading}}">
+    <div class="empty" if="{{!hasLyrics && waitLong}}">
       <text class="empty-icon">♪</text>
-      <text class="empty-title">暂无歌词</text>
-      <text class="empty-desc">{{connected ? '手机上放歌后自动同步' : '演示模式 · 连接手机后自动同步'}}</text>
-      <div class="empty-actions">
-        <div class="chip" @click="fetchLyrics"><text class="chip-text">获取歌词</text></div>
+      <text class="empty-title">这首歌没有匹配到歌词</text>
+      <text class="empty-desc">{{connected ? '已自动向手机请求过，可以点下面重试' : '演示模式 · 连接手机后自动同步'}}</text>
+      <div class="empty-actions" if="{{connected}}">
+        <div class="chip" @click="fetchLyrics"><text class="chip-text">重试</text></div>
       </div>
     </div>
 
@@ -86,10 +87,8 @@ export default {
     vibrateOn: true,
     loading: true,
     loadingText: '正在准备',
-    dots: '',
-    loadWidth: 30,
-    dotStep: 0,
-    loadStep: 0,
+    spinFrame: 0,
+    waitLong: false,
     transferActive: false,
     transferReceived: 0,
     transferTotal: 0,
@@ -107,6 +106,9 @@ export default {
     this.swipedAt = 0
     this.lastBrowseAt = 0
     this.loadTimer = null
+    this.waitTimer = null
+    this.retryTimer = null
+    this.fetchKey = ''
     // Vela 没有 CSS 动画，用定时器换帧做加载动效；加载结束即停
     this.startLoadTimer()
     try {
@@ -134,26 +136,30 @@ export default {
     if (this.loadTimer) {
       return
     }
+    // Vela 没有 CSS 动画，圆形加载靠 8 张图轮换
     this.loadTimer = setInterval(() => {
-      const step = (this.dotStep + 1) % 4
-      this.dotStep = step
-      this.dots = step === 0 ? '' : step === 1 ? '·' : step === 2 ? '··' : '···'
-      const seq = [20, 40, 60, 80, 60, 40]
-      this.loadStep = (this.loadStep + 1) % seq.length
-      this.loadWidth = seq[this.loadStep]
-    }, 320)
+      this.spinFrame = (this.spinFrame + 1) % 8
+    }, 130)
   },
   stopLoadTimer() {
     if (this.loadTimer) {
       clearInterval(this.loadTimer)
       this.loadTimer = null
     }
-    this.dots = ''
+    this.spinFrame = 0
   },
   onDestroy() {
     if (this.loadTimer) {
       clearInterval(this.loadTimer)
       this.loadTimer = null
+    }
+    if (this.waitTimer) {
+      clearTimeout(this.waitTimer)
+      this.waitTimer = null
+    }
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer)
+      this.retryTimer = null
     }
     if (this.unsubscribe) {
       this.unsubscribe()
@@ -196,11 +202,15 @@ export default {
     this.transferTotal = Number(view.transferTotal) || 0
     const pct = Number(view.transferPercent) || 0
     this.transferLevel = Math.max(0, Math.min(100, Math.floor(pct / 10) * 10))
+    // 打开歌词页就自动要一次；已经拿到这首歌的歌词就不会重复请求
+    this.maybeFetch(view)
     if (this.lines.length || view.mock) {
       this.loading = false
+      this.clearWait()
     } else {
       this.loading = true
-      this.loadingText = receiving ? '正在接收歌词' : (view.connected ? '等待手机歌词' : '等待连接手机')
+      this.loadingText = receiving ? '正在接收歌词' : (view.connected ? '正在匹配歌词' : '等待连接手机')
+      this.startWait()
     }
     // 先定好 loading 再重建行，避免 hasLyrics 与空态打架
     this.refreshRows()
@@ -209,6 +219,52 @@ export default {
     } else {
       this.stopLoadTimer()
     }
+  },
+  // 8 秒还没拿到歌词才显示「没匹配到」：一打开就判失败太武断，
+  // 手机那边可能正在在线匹配 / 分片还在路上。
+  startWait() {
+    if (this.waitTimer || this.waitLong) {
+      return
+    }
+    this.waitTimer = setTimeout(() => {
+      this.waitTimer = null
+      this.waitLong = true
+    }, 8000)
+  },
+  clearWait() {
+    if (this.waitTimer) {
+      clearTimeout(this.waitTimer)
+      this.waitTimer = null
+    }
+    this.waitLong = false
+  },
+  // 打开页面就自动要一次歌词。requestLyrics 内部有去重：
+  // 播放页已经拿到这首歌就不会再向手机要第二遍，避免同一首歌词发两次。
+  maybeFetch(view) {
+    if (!view || view.mock || !view.connected) {
+      return
+    }
+    if (view.hasLyrics) {
+      return
+    }
+    const key = (view.title || '') + '|' + (view.artist || '')
+    if (this.fetchKey === key) {
+      return
+    }
+    this.fetchKey = key
+    player.requestLyrics().catch(function () {})
+    // 可能刚好撞上换歌 / 通道忙，8 秒后补一次（拿到就不再补）
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer)
+    }
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
+      const snap = player.snapshot()
+      if (snap && snap.hasLyrics) {
+        return
+      }
+      player.requestLyrics().catch(function () {})
+    }, 8000)
   },
   // 以 focus 为中心取前后各两句；浏览时可以上下滑着看全曲
   refreshRows() {
@@ -378,7 +434,8 @@ export default {
     router.back()
   },
   fetchLyrics() {
-    player.requestLyrics().catch(() => {})
+    // 手动重试：允许绕过「已请求过」的节流，但 5 秒内只放行一次
+    player.requestLyrics(true).catch(() => {})
   },
   offsetBack() {
     this.vibrate()
@@ -546,6 +603,11 @@ export default {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+}
+.spinner {
+  width: 26dp;
+  height: 26dp;
+  margin-bottom: 5dp;
 }
 .loading-text {
   width: 100%;

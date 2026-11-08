@@ -39,19 +39,23 @@
       <text class="tip">手机端保持运行，手环才能持续收到歌词与状态</text>
     </div>
 
-    <!-- 播放 -->
+    <!-- 播放：两列网格，把纵向空间压出来，保证下面的「歌词偏移」整条都在屏内 -->
     <div class="body" if="{{tab === 1}}">
-      <div class="opt" @click="toggleMock">
-        <text class="opt-text">演示模式 · {{mock ? '开' : '关'}}</text>
+      <div class="grid">
+        <div class="cell" @click="toggleMock">
+          <text class="cell-text">演示 · {{mock ? '开' : '关'}}</text>
+        </div>
+        <div class="cell cell-end" @click="toggleFollow">
+          <text class="cell-text">跟随 · {{follow ? '开' : '关'}}</text>
+        </div>
       </div>
-      <div class="opt" @click="toggleFollow">
-        <text class="opt-text">自动跟随歌词 · {{follow ? '开' : '关'}}</text>
-      </div>
-      <div class="opt" @click="toggleAutoSave">
-        <text class="opt-text">自动保存歌词 · {{autoSave ? '开' : '关'}}</text>
-      </div>
-      <div class="opt" @click="toggleVibrate">
-        <text class="opt-text">操作振动 · {{vibrate ? '开' : '关'}}</text>
+      <div class="grid">
+        <div class="cell" @click="toggleAutoSave">
+          <text class="cell-text">自动保存 · {{autoSave ? '开' : '关'}}</text>
+        </div>
+        <div class="cell cell-end" @click="toggleVibrate">
+          <text class="cell-text">振动 · {{vibrate ? '开' : '关'}}</text>
+        </div>
       </div>
       <text class="opt-label">歌词偏移</text>
       <div class="offset-bar">
@@ -59,6 +63,7 @@
         <div class="oval" @click="offsetReset"><text class="oval-text">{{offsetText}}</text></div>
         <div class="obtn" @click="offsetForward"><text class="osym">+</text></div>
       </div>
+      <text class="tip">每格 {{offsetStepText}}，点中间数字归零</text>
     </div>
 
     <!-- 显示 -->
@@ -125,7 +130,7 @@ export default {
     dotClass: 'demo',
     noteText: '',
     diagnosisText: '',
-    version: '1.0.1'
+    version: '1.0.2'
   },
   onInit() {
     debug.mark('page:settings', 'onInit')
@@ -270,11 +275,11 @@ export default {
   },
   offsetBack() {
     this.buzz()
-    player.adjustOffset(-500)
+    player.adjustOffset(-(this.offsetStep || 500))
   },
   offsetForward() {
     this.buzz()
-    player.adjustOffset(500)
+    player.adjustOffset(this.offsetStep || 500)
   },
   offsetReset() {
     this.buzz()
@@ -430,11 +435,11 @@ export default {
 }
 .opt {
   width: 100%;
-  height: 30dp;
+  height: 28dp;
   flex-grow: 0;
   flex-shrink: 0;
-  margin-bottom: 5dp;
-  border-radius: 10dp;
+  margin-bottom: 4dp;
+  border-radius: 9dp;
   background-color: #0e151e;
   border-width: 1px;
   border-color: #1c2836;
@@ -443,9 +448,37 @@ export default {
 }
 .opt-text {
   font-size: 12dp;
+  line-height: 24dp;
+  font-weight: bold;
+  color: #dfe8f2;
+}
+.grid {
+  width: 100%;
+  flex-grow: 0;
+  flex-shrink: 0;
+  margin-bottom: 4dp;
+  flex-direction: row;
+}
+.cell {
+  flex: 1;
+  height: 30dp;
+  margin-right: 4dp;
+  border-radius: 9dp;
+  background-color: #0e151e;
+  border-width: 1px;
+  border-color: #1c2836;
+  align-items: center;
+  justify-content: center;
+}
+.cell-end {
+  margin-right: 0;
+}
+.cell-text {
+  font-size: 11dp;
   line-height: 26dp;
   font-weight: bold;
   color: #dfe8f2;
+  text-align: center;
 }
 .opt-danger {
   background-color: #1b1114;
@@ -469,7 +502,7 @@ export default {
   height: 28dp;
   flex-grow: 0;
   flex-shrink: 0;
-  margin-top: 4dp;
+  margin-top: 3dp;
   flex-direction: row;
   align-items: center;
   border-radius: 9dp;

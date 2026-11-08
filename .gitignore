@@ -8,14 +8,3 @@ android/local.properties
 .idea/
 *.iml
 .DS_Store
-
-# 签名与证书：绝不进仓库
-*.keystore
-*.jks
-sign/
-android/keystore.properties
-
-# 构建产物
-dist/
-*.rpk
-*.apk
