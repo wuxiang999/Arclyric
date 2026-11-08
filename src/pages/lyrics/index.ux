@@ -15,7 +15,8 @@
 
     <div class="stage" if="{{hasLyrics}}" @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @swipe="onSwipe">
       <block for="{{rows}}">
-        <div class="line-row {{$item.active ? 'row-active' : ''}}" @click="onLine($item)" @touchstart="onTouchStart" @touchend="onTouchEnd">
+        <!-- 触摸手势统一交给外层 .stage，行只保留点击（需要 item） -->
+        <div class="line-row {{$item.active ? 'row-active' : ''}}" @click="onLine($item)">
           <div class="marker {{$item.active && $item.first ? 'marker-on' : ''}}"></div>
           <text class="line {{$item.cls}}">{{$item.text}}</text>
         </div>

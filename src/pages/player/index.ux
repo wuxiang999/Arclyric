@@ -32,8 +32,10 @@
         <text class="loading-sub" if="{{transferActive}}">已收到 {{transferReceived}}/{{transferTotal}} 包</text>
       </block>
       <block if="{{!loading}}">
-        <text class="lyric-row {{$item.cls}}" for="{{rows}}" @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @swipe="onSwipe" @click="onLyricTap">{{$item.text}}</text>
-        <text class="lyric-hint" if="{{hintOn}}" @click="onLyricTap">轻触回到当前句</text>
+        <!-- 手势与点击只绑在外层 .lyric：行内再绑一次会冒泡成两次，
+             滑动后「吞点击」标志被第一次消费，第二次就把页面推走了 -->
+        <text class="lyric-row {{$item.cls}}" for="{{rows}}">{{$item.text}}</text>
+        <text class="lyric-hint" if="{{hintOn}}">轻触回到当前句</text>
       </block>
     </div>
 
