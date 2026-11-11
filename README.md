@@ -36,6 +36,7 @@ dist/                    最终产物：APK / RPK / 校验和
 tools/                   图标与品牌图生成脚本、RPK 构建脚本（build-rpk.sh）
 assets/                  512/96 图标与品牌预览
 docs/DESIGN.md           设计系统、最佳实践与来源
+docs/HAPTIC-AUDIO.md     马达发声（振动外放）调研备忘：社区方案、环间音乐技术拆解、待确认问题
 ```
 
 ## 运行
